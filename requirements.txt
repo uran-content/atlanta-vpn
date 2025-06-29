@@ -1,0 +1,6 @@
+aiogram==3.14.0
+apscheduler
+aiosqlite
+yookassa
+py3xui
+pandas

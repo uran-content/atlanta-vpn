@@ -1,0 +1,14 @@
+handlers/keys/
+handlers/venv/
+__pycache__/
+keys/
+config.py
+prompt.py
+combined.txt
+*.db
+*.db-shm
+*.db-wal
+*.log
+database_backups/
+venv/
+*.xlsx
