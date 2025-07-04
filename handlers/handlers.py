@@ -1,4 +1,3 @@
-# handlers.handlers.py
 import base64
 import logging
 import os
@@ -19,7 +18,6 @@ from py3xui import AsyncApi, Client
 from apscheduler.triggers.cron import CronTrigger
 import string
 import hashlib
-from config import CHANNEL, BOT, SUPPORT, CHANNEL_LINK, REDIRECT_URI, SUPPORT_URI
 from handlers.classes import (
     AdminBroadcastStates,
     AdminKeyRemovalStates,
@@ -283,7 +281,7 @@ async def start_command(message: types.Message, bot: Bot, state: FSMContext):
         persistent=True
     )
 
-    channel_id = CHANNEL
+    channel_id = "@AtlantaVPN" 
 
     if len(args) > 1 and args[1].startswith("ref_"):
         referrer_id = int(args[1].replace("ref_", ""))
@@ -304,7 +302,7 @@ async def start_command(message: types.Message, bot: Bot, state: FSMContext):
         
         if not is_subscribed:
             kb = InlineKeyboardBuilder()
-            kb.button(text="📢 Подписаться на канал", url=CHANNEL_LINK)
+            kb.button(text="📢 Подписаться на канал", url="https://t.me/AtlantaVPN")
             kb.button(text="🔄 Проверить подписку", callback_data="check_subscription")
             kb.adjust(1)
             
@@ -445,13 +443,13 @@ async def troubleshoot_vpn(callback: types.CallbackQuery, bot: Bot, state: FSMCo
     Отправляет пользователю пошаговую инструкцию по устранению проблем с VPN
     """
     try:
-        channel_id = CHANNEL
+        channel_id = "@AtlantaVPN" 
         member = await bot.get_chat_member(chat_id=channel_id, user_id=callback.from_user.id)
         is_subscribed = member.status not in ["left", "kicked", "banned"]
         
         if not is_subscribed:
             kb = InlineKeyboardBuilder()
-            kb.button(text="📢 Подписаться на канал", url=CHANNEL_LINK)
+            kb.button(text="📢 Подписаться на канал", url="https://t.me/AtlantaVPN")
             kb.button(text="🔄 Проверить подписку", callback_data="check_subscription")
             kb.adjust(1)
             
@@ -478,7 +476,7 @@ async def troubleshoot_vpn(callback: types.CallbackQuery, bot: Bot, state: FSMCo
     kb = InlineKeyboardBuilder()
     kb.button(text="🔄 Заменить ключ", callback_data="replace_key")
     kb.button(text="🌍 Сменить страну", callback_data="change_key_country")
-    kb.button(text="🆘 Поддержка", url=SUPPORT_URI)
+    kb.button(text="🆘 Поддержка", url="https://t.me/AtlantaVPN_Support")
     kb.button(text="◀️ Назад", callback_data="back_to_menu")
     kb.adjust(1)
 
@@ -512,7 +510,7 @@ async def check_subscription(callback: types.CallbackQuery, bot: Bot, state: FSM
     """
     Проверка подписки с сохранением состояния
     """
-    channel_id = CHANNEL
+    channel_id = "@AtlantaVPN"
     
     try:
         member = await bot.get_chat_member(chat_id=channel_id, user_id=callback.from_user.id)
@@ -520,7 +518,7 @@ async def check_subscription(callback: types.CallbackQuery, bot: Bot, state: FSM
         
         if not is_subscribed:
             kb = InlineKeyboardBuilder()
-            kb.button(text="📢 Подписаться на канал", url=CHANNEL_LINK)
+            kb.button(text="📢 Подписаться на канал", url="https://t.me/AtlantaVPN")
             kb.button(text="🔄 Проверить подписку", callback_data="check_subscription")
             kb.adjust(1)
             
@@ -730,14 +728,14 @@ async def profile_command_handler(message: Message, bot: Bot, state: FSMContext)
     Обработчик команды /profile
     """
     await state.clear()
-    channel_id = CHANNEL
+    channel_id = "@AtlantaVPN" 
     try:
         member = await bot.get_chat_member(chat_id=channel_id, user_id=message.from_user.id)
         is_subscribed = member.status not in ["left", "kicked", "banned"]
         
         if not is_subscribed:
             kb = InlineKeyboardBuilder()
-            kb.button(text="📢 Подписаться на канал", url=CHANNEL_LINK)
+            kb.button(text="📢 Подписаться на канал", url="https://t.me/AtlantaVPN")
             kb.button(text="🔄 Проверить подписку", callback_data="check_subscription")
             kb.adjust(1)
             
@@ -940,7 +938,7 @@ async def help_command_handler(message: Message, bot: Bot):
     """
     Обработчик команды /help
     """
-    channel_id = CHANNEL
+    channel_id = "@AtlantaVPN"
     try:
         member = await bot.get_chat_member(
             chat_id=channel_id, user_id=message.from_user.id
@@ -949,7 +947,7 @@ async def help_command_handler(message: Message, bot: Bot):
 
         if not is_subscribed:
             kb = InlineKeyboardBuilder()
-            kb.button(text="📢 Подписаться на канал", url=CHANNEL_LINK)
+            kb.button(text="📢 Подписаться на канал", url="https://t.me/AtlantaVPN")
             kb.button(text="🔄 Проверить подписку", callback_data="check_subscription")
             kb.adjust(1)
 
@@ -985,14 +983,14 @@ async def connect_command_handler(message: Message, bot: Bot):
     """
     Обработчик команды /connect
     """
-    channel_id = CHANNEL
+    channel_id = "@AtlantaVPN" 
     try:
         member = await bot.get_chat_member(chat_id=channel_id, user_id=message.from_user.id)
         is_subscribed = member.status not in ["left", "kicked", "banned"]
         
         if not is_subscribed:
             kb = InlineKeyboardBuilder()
-            kb.button(text="📢 Подписаться на канал", url=CHANNEL_LINK)
+            kb.button(text="📢 Подписаться на канал", url="https://t.me/AtlantaVPN")
             kb.button(text="🔄 Проверить подписку", callback_data="check_subscription")
             kb.adjust(1)
             
@@ -1045,13 +1043,13 @@ async def instruction_command(callback: types.CallbackQuery, bot: Bot, state: FS
     Отображает общую инструкцию и кнопки для выбора устройства
     """
     try:
-        channel_id = CHANNEL
+        channel_id = "@AtlantaVPN" 
         member = await bot.get_chat_member(chat_id=channel_id, user_id=callback.from_user.id)
         is_subscribed = member.status not in ["left", "kicked", "banned"]
         
         if not is_subscribed:
             kb = InlineKeyboardBuilder()
-            kb.button(text="📢 Подписаться на канал", url=CHANNEL_LINK)
+            kb.button(text="📢 Подписаться на канал", url="https://t.me/AtlantaVPN")
             kb.button(text="🔄 Проверить подписку", callback_data="check_subscription")
             kb.adjust(1)
             
@@ -1321,13 +1319,13 @@ async def invite_command(callback: types.CallbackQuery, bot: Bot, state: FSMCont
     Обработчик команды приглашения с реферальной системой
     """
     try:
-        channel_id = CHANNEL
+        channel_id = "@AtlantaVPN" 
         member = await bot.get_chat_member(chat_id=channel_id, user_id=callback.from_user.id)
         is_subscribed = member.status not in ["left", "kicked", "banned"]
         
         if not is_subscribed:
             kb = InlineKeyboardBuilder()
-            kb.button(text="📢 Подписаться на канал", url=CHANNEL_LINK)
+            kb.button(text="📢 Подписаться на канал", url="https://t.me/AtlantaVPN")
             kb.button(text="🔄 Проверить подписку", callback_data="check_subscription")
             kb.adjust(1)
             
@@ -3199,7 +3197,7 @@ async def show_key_details(callback: types.CallbackQuery, state: FSMContext):
         f"🌍 Страна: {country}\n"
         f"💳 Метод оплаты: {payment_method_title}\n"
         f"🆔 Ключ(Кликни на него, чтобы скопировать):\n\n<code>{masked_key}</code>\n\n"
-        f"📜 <a href='{CHANNEL_LINK}/31'>Инструкция по подключению</a>"
+        "📜 <a href='https://t.me/AtlantaVPN/31'>Инструкция по подключению</a>"
     )
     
     await callback.message.edit_caption(
@@ -3428,13 +3426,13 @@ async def extend_subscription(callback: types.CallbackQuery, state: FSMContext, 
     Обработчик выбора продления подписки
     """
     try:
-        channel_id = CHANNEL
+        channel_id = "@AtlantaVPN" 
         member = await bot.get_chat_member(chat_id=channel_id, user_id=callback.from_user.id)
         is_subscribed = member.status not in ["left", "kicked", "banned"]
         
         if not is_subscribed:
             kb = InlineKeyboardBuilder()
-            kb.button(text="📢 Подписаться на канал", url=CHANNEL_LINK)
+            kb.button(text="📢 Подписаться на канал", url="https://t.me/AtlantaVPN")
             kb.button(text="🔄 Проверить подписку", callback_data="check_subscription")
             kb.adjust(1)
             
@@ -3593,13 +3591,13 @@ async def connection(callback: types.CallbackQuery, state: FSMContext, bot: Bot)
         state: Состояние FSM 
     """
     try:
-        channel_id = CHANNEL
+        channel_id = "@AtlantaVPN" 
         member = await bot.get_chat_member(chat_id=channel_id, user_id=callback.from_user.id)
         is_subscribed = member.status not in ["left", "kicked", "banned"]
         
         if not is_subscribed:
             kb = InlineKeyboardBuilder()
-            kb.button(text="📢 Подписаться на канал", url=CHANNEL_LINK)
+            kb.button(text="📢 Подписаться на канал", url="https://t.me/AtlantaVPN")
             kb.button(text="🔄 Проверить подписку", callback_data="check_subscription")
             kb.adjust(1)
             
@@ -4153,21 +4151,18 @@ async def process_email(message: Message, state: FSMContext, bot: Bot, existing_
                     await send_info_for_admins(
                         f"[Контроль ПРОТОКОЛА, Функция: process_email.\nсервер: {address},\nюзер: {client.email},\nновый протокол: {protocol}]:\n{client}",
                         await get_admins(),
-                        bot, 
+                        bot,
                         username=user.get("username")
                     )
                 except Exception as e:
                     logger.error(f"Error updating client: {str(e)}", exc_info=True)
                     error_message = (
-                        "❌ Ошибка при продлении подписки.\n\n"
-                        "Пожалуйста, обратитесь в поддержку и предоставьте следующую информацию:\n"
-                        f"Error: {e}\n\n"
-                        f"• Устройство: {device}\n"
-                        f"• Дни: {days}\n"
-                        f"• ID клиента: {client.id if client else 'Not found'}\n"
-                        f"• Inbound ID: {client.inbound_id if client else 'Not found'}"
+                        "❌Срок действия вашего ключа истек, и он был удален.\n\n"
+                        "Нажмите на «Купить VPN», чтобы получить новый ключ."
                     )
-                    await message.answer(error_message)
+                    kb = InlineKeyboardBuilder()
+                    kb.button(text="🌐 Купить VPN", callback_data="connection")
+                    await message.answer(error_message, reply_markup=kb.as_markup())
                     print(f"Client details: {client}")
                     print(f"Unique UUID: {unique_uuid}")
                     await send_info_for_admins(f"[Продление] Unique UUID: {unique_uuid}", await get_admins(), bot, username=user.get("username"))
