@@ -2879,6 +2879,7 @@ async def get_user(user_id):
         columns = [
             'user_id',
             'username',
+            'email',
             'balance',
             'subscription_type',
             'subscription_end',
