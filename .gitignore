@@ -12,3 +12,4 @@ combined.txt
 database_backups/
 venv/
 *.xlsx
+seen_strings.txt

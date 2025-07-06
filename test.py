@@ -1,19 +1,23 @@
-from py3xui import Api, Client
-import uuid
-from datetime import datetime, timezone
-api = Api(
-    "http://45.12.133.236:2053",
-    "patapon",
-    "Patapon1336.",
-    use_tls_verify=False
-)
+from handlers.utils import once_per_string
+import asyncio
 
-api.login()
+async def main():
+    s = "строка 1"
 
-current_time = datetime.now(timezone.utc).timestamp() * 1000  # Текущее время в миллисекундах
-expiry_time = int(current_time + (7 * 86400000))  # Добавляем дни в миллисекундах
+    z = False
+    async for _ in once_per_string(s):
+        z = True
+    
+    if z:
+        print("Зашли!")
+    else:
+        print("НЕ ЗАШЛИ!!")
 
-new_client = Client(id=str(uuid.uuid4()), email="test", enable=True, expiry_time=expiry_time)
-inbound_id = 1
-
-api.client.add(inbound_id, [new_client])
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Бот остановлен пользователем")
+    except Exception as e:
+        print(f"Критическая ошибка: {e}")
+        raise

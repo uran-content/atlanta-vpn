@@ -5,9 +5,10 @@ import random
 import re
 import uuid
 from datetime import datetime, timezone, timedelta
+from typing import List, Dict
 
 import pandas as pd
-from aiogram import Bot, F, Router, types
+from aiogram import Bot, F, Router, types, Dispatcher
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -31,6 +32,9 @@ from handlers.classes import (
     KeyNameStates
 )
 from handlers.database import (
+    add_multiple_payment_methods,
+    get_key_days,
+    get_key_price,
     add_active_key,
     add_or_update_user,
     add_promocode,
@@ -2278,6 +2282,8 @@ async def process_protocol_change(callback: types.CallbackQuery, state: FSMConte
         current_protocol = 'ss' if key.startswith('ss://') else 'vless'
         device, unique_id, unique_uuid, address, parts = extract_key_data(key)
         old_expiry_time = await get_key_expiry_date(key)
+        price = await get_key_price(key)
+        days = await get_key_days(key)
         server = await get_server_by_address(address, protocol="shadowsocks" if current_protocol == 'ss' else "vless")
         
         if not server:
@@ -2348,7 +2354,7 @@ async def process_protocol_change(callback: types.CallbackQuery, state: FSMConte
             raise Exception("Не удалось создать нового клиента на сервере")
         
         # 3. Добавляем новый ключ в БД пользователя
-        await add_active_key(callback.from_user.id, new_key, device, old_expiry_time, device)
+        await add_active_key(callback.from_user.id, new_key, device, old_expiry_time, device, price, days)
         
         # 4. Обновляем счетчик на новом сервере
         clients_count = await get_server_count_by_address(
@@ -2601,6 +2607,9 @@ async def process_country_change(callback: types.CallbackQuery, state: FSMContex
         return
     
     try:
+        price = await get_key_price(key)
+        days = await get_key_days(key)
+
         # Устанавливаем индикатор загрузки
         await callback.message.edit_caption(
             caption="⏳ <b>Пожалуйста, подождите...</b>\n\n"
@@ -2676,7 +2685,7 @@ async def process_country_change(callback: types.CallbackQuery, state: FSMContex
             raise Exception("Не удалось создать нового клиента на сервере")
         
         # 3. Добавляем новый ключ в БД пользователя
-        await add_active_key(callback.from_user.id, new_key, device, old_expiry_time, device)
+        await add_active_key(callback.from_user.id, new_key, device, old_expiry_time, device, price, days)
         
         # 4. Обновляем счетчик на новом сервере
         clients_count = await get_server_count_by_address(
@@ -2879,6 +2888,8 @@ async def process_selected_key(message, key, user_id, state, bot):
         protocol = 'ss' if key.startswith('ss://') else 'vless'
         device, unique_id, unique_uuid, address, parts = extract_key_data(key)
         old_expiry_time = await get_key_expiry_date(key)
+        price = await get_key_price(key)
+        days = await get_key_days(key)
 
         # Генерируем случайный набор из 4 букв для уникальности email
         random_part = ''.join(random.choice(string.ascii_lowercase) for _ in range(4))
@@ -2941,7 +2952,7 @@ async def process_selected_key(message, key, user_id, state, bot):
             raise Exception("Не удалось создать нового клиента на сервере")
             
         # 2. Добавляем новый ключ в БД
-        await add_active_key(user_id, new_key, device, old_expiry_time, device)
+        await add_active_key(user_id, new_key, device, old_expiry_time, device, price, days)
         
         # 3. Обновляем счетчик на новом сервере
         clients_count = await get_server_count_by_address(
@@ -3749,7 +3760,7 @@ async def choose_subscription(callback: types.CallbackQuery, state: FSMContext, 
                 )
                 
                 await callback.message.answer(success_text, parse_mode="HTML", reply_markup=kb.as_markup())
-                await add_active_key(callback.from_user.id, vpn_link, device, client.expiry_time, device)
+                await add_active_key(callback.from_user.id, vpn_link, device, client.expiry_time, device, 0, 3)
                 await update_keys_count(callback.from_user.id, keys_count + 1)
                 clients_count = await get_server_count_by_address(server_address, inbound_id, protocol="shadowsocks" if protocol == 'ss' else "vless") 
                 await update_server_clients_count(server_address, clients_count + 1, inbound_id) 
@@ -4302,7 +4313,7 @@ async def process_email(message: Message, state: FSMContext, bot: Bot, existing_
                 )
 
                 await update_balance(current_user_id, int(user['balance']) - int(price))
-                await add_active_key(current_user_id, vpn_link, device, client.expiry_time, device)
+                await add_active_key(current_user_id, vpn_link, device, client.expiry_time, device, price, days)
                 await update_keys_count(current_user_id, keys_count + 1)
                 await update_server_clients_count(address, clients_count + 1, inbound_id)
                 expiry_time = datetime.fromtimestamp(expiry_time/1000).strftime('%d.%m.%Y %H:%M')
@@ -7438,3 +7449,88 @@ async def admin_back(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.answer("Состояние сброшено. Отправьте команду /admin для доступа к админ-панели")
     await callback.message.delete()
+
+# ------------------------------------------------
+DP: Dispatcher = None
+def setup_dp_instance(dp: Dispatcher):
+    """
+    Устанавливает глобальную переменную DP
+    """
+    global DP
+    DP = dp
+
+def get_user_state(bot: Bot, dispatcher: Dispatcher, user_id: int) -> FSMContext:
+    return dispatcher.fsm.get_context(bot=bot, chat_id=user_id, user_id=user_id)
+
+method_types = {
+    "sber_loan": "Кредит от Сбербанка"
+}
+
+async def auto_payments_agreement(bot: Bot, user_id: int, payment_methods: List[Dict]):
+    """
+    Присылает пользователю сообщение о том, что есть возможность подключить способ оплаты.
+    """
+    state = get_user_state(bot=bot, dispatcher=DP, user_id=user_id)
+    await state.update_data(payment_methods=payment_methods)
+
+    text = (
+        "В нашем сервисе стала доступна возможность автоплатежей!\n\n"
+        f"На данный момент мы помним про {len(payment_methods)} ваших методов оплаты.\n"
+        "Вы можете отказаться от автоплатежей, нажав на кнопку 'Отказаться от автоплатежей'"
+        "под этим сообщением или принять условия.\n\n"
+
+        "Также вы всегда можете управлять своими методами оплаты в личном кабинете."
+    )
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Принять", callback_data="accept_auto_payments")
+    kb.button(text="❌ Отказаться от автоплатежей", callback_data="decline_auto_payments")
+    kb.adjust(1, 1)
+    await bot.send_message(
+        chat_id=user_id,
+        text=text,
+        parse_mode="HTML",
+        reply_markup=kb.as_markup()
+    )
+
+@router.callback_query(F.data == "accept_auto_payments")
+async def accept_auto_payments(callback_query: types.CallbackQuery, state: FSMContext, bot: Bot):
+    await callback_query.message.edit_reply_markup(reply_markup=None)
+    await callback_query.answer()
+
+    user_id = callback_query.from_user.id
+
+    data = await state.get_data()
+    payment_methods = data.get("payment_methods")
+    
+    await add_multiple_payment_methods(
+        user_id=user_id,
+        payment_methods=payment_methods
+    )
+
+    text = "Успешно!"
+    kb = InlineKeyboardBuilder()
+    kb.button(text="◀️ Вернуться в меню", callback_data="back_to_menu")
+    await bot.send_message(
+        chat_id = user_id,
+        text=text,
+        reply_markup=kb.as_markup()
+    )
+
+@router.callback_query(F.data == "decline_auto_payments")
+async def accept_auto_payments(callback_query: types.CallbackQuery, state: FSMContext, bot: Bot):
+    await callback_query.message.edit_reply_markup(reply_markup=None)
+    await callback_query.answer()
+
+    user_id = callback_query.from_user.id
+
+    text = "Автоплатежи успешно отключены!"
+    kb = InlineKeyboardBuilder()
+    kb.button(text="◀️ Вернуться в меню", callback_data="back_to_menu")
+    await bot.send_message(
+        chat_id = user_id,
+        text=text,
+        reply_markup=kb.as_markup()
+    )
+
+# ------------------------------------------------

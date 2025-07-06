@@ -5,6 +5,7 @@ import os
 import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Dict, List
 
 import aiohttp
 import aiosqlite
@@ -110,6 +111,13 @@ async def init_db():
             print(f"База данных {DB_PATH} уже существует. Проверяем и обновляем структуру.")
 
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS card_cancel_stats (
+                user_id INTEGER PRIMARY KEY,
+                reason TEXT NOT NULL
+            )
+        """)
+
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
@@ -134,6 +142,8 @@ async def init_db():
                 user_id INTEGER,
                 device_id TEXT,
                 expiration_date TEXT,
+                price INTEGER NOT NULL,
+                days INTEGER NOT NULL,
                 payment_id TEXT,
                 name TEXT DEFAULT NULL
             )
@@ -234,6 +244,9 @@ async def init_db():
         await update_server_credentials(NEW_LOGIN, NEW_PASSWORD)
         #await add_channel_column_to_forum_topics()
         await db.commit()
+        
+        await _ensure_column_exists(db, "keys", "price", "INTEGER")
+        await _ensure_column_exists(db, "keys", "days", "INTEGER")
 
     print("Инициализация базы данных завершена.")
     await cleanup_expired_keys()
@@ -244,6 +257,15 @@ async def init_db():
     #await add_channel_column_to_users()
     #await migrate_servers_data()
     #await add_inbound_columns()
+
+async def _ensure_column_exists(
+    db: aiosqlite.Connection, table: str, column: str, col_type: str
+):
+    """Добавляет колонку, если её нет (SQLite не поддерживает IF NOT EXISTS)."""
+    async with db.execute(f"PRAGMA table_info({table})") as cursor:
+        cols = [row[1] async for row in cursor]
+    if column not in cols:
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type};")
 
 async def add_name_column_to_keys():
     """
@@ -778,6 +800,13 @@ async def get_user_transactions(user_id: int):
         transactions = await cursor.fetchall()
         return [dict(row) for row in transactions]
 
+async def add_multiple_payment_methods(user_id: int, payment_methods: List[Dict]):
+    for method in payment_methods:
+        await add_payment_method(user_id=user_id,
+                                 payment_method_id=method["id"],
+                                 issuer_name=method["type"],
+                                 title=method["type"])
+
 async def get_transaction_by_id(transaction_id: str) -> dict | None:
     """
     Получает информацию о транзакции по её ID
@@ -1129,7 +1158,7 @@ async def cleanup_expired_keys():
             # Получаем все истекшие ключи
             cursor = await db.execute("""
                 SELECT key FROM keys 
-                WHERE expiration_date <= ?
+                WHERE expiration_date < ?
             """, (current_time,))
             
             expired_keys = await cursor.fetchall()
@@ -1665,7 +1694,7 @@ async def remove_expired_keys():
             # Получаем все истекшие ключи с информацией о пользователях
             cursor = await db.execute("""
                 SELECT key, user_id FROM keys 
-                WHERE expiration_date <= ?
+                WHERE expiration_date < ?
             """, (current_time,))
             
             expired_keys = await cursor.fetchall()
@@ -2311,7 +2340,7 @@ async def remove_active_key(key):
         await db.execute("DELETE FROM keys WHERE key = ?", (key,))
         await db.commit()
 
-async def add_active_key(user_id, key, device_id, expiration_date, name):
+async def add_active_key(user_id, key, device_id, expiration_date, name, price: int, days: int):
     try:
         logger.info(f"Adding key to database with params: user_id={user_id}, device_id={device_id}, expiration_date={expiration_date}")
         async with aiosqlite.connect(DB_PATH) as db:
@@ -2327,8 +2356,8 @@ async def add_active_key(user_id, key, device_id, expiration_date, name):
 
             # Добавление нового ключа
             await db.execute(
-                "INSERT INTO keys (key, user_id, device_id, expiration_date, name) VALUES (?, ?, ?, ?, ?)",
-                (key, user_id, device_id, expiration_date, name)
+                "INSERT INTO keys (key, user_id, device_id, expiration_date, name, price, days) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (key, user_id, device_id, expiration_date, name, price, days)
             )
             
             # Сначала удаляем запись из key_usage_reminders, если она существует
@@ -2348,6 +2377,42 @@ async def add_active_key(user_id, key, device_id, expiration_date, name):
     except Exception as e:
         logger.error(f"Error adding key to database: {e}", exc_info=True)
         raise
+
+async def get_users_without_payment_methods():
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("PRAGMA foreign_keys = ON")
+        sql = """
+        SELECT u.*
+        FROM   users AS u
+        LEFT JOIN user_payment_methods AS upm
+               ON upm.user_id = u.user_id
+        WHERE  upm.user_id IS NULL;
+        """
+        async with db.execute(sql) as cursor:
+            rows = await cursor.fetchall()
+    return rows
+
+async def delete_all_payment_methods():
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM user_payment_methods")
+        await db.commit()
+
+async def update_key_expriration_date(key, new_end_date):
+    """
+    Обновляет дату окончания подписки для пользователя
+    
+    new_end_date обязательно передавать в формате UNIX timestamp в миллисекундах
+
+    Args:
+        user_id (int): ID пользователя
+        new_end_date (str): Новая дата окончания подписки
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE keys SET expiration_date = ? WHERE key = ?
+        """, (new_end_date, key))
+        await db.commit()
 
 async def get_key_traffic(key):
     """
@@ -2604,6 +2669,18 @@ async def get_user_by_username(username: str):
                 return dict(zip([col[0] for col in cursor.description], user))
             return None
 
+async def get_key_price(key):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT price FROM keys WHERE key = ?", (key,))
+        result = await cursor.fetchone()
+        return result[0] if result else None
+    
+async def get_key_days(key):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT days FROM keys WHERE key = ?", (key,))
+        result = await cursor.fetchone()
+        return result[0] if result else None
+
 async def get_user_info(key=None, username=None, user_id=None):
     """
     Получает информацию о пользователе по ключу, username или user_id.
@@ -2846,6 +2923,25 @@ async def remove_key_bd(key):
             DELETE FROM keys WHERE key = ?
         """, (key,))
         await db.commit()
+
+async def get_all_keys_to_expire_today() -> list[dict]:
+    """
+    Возвращает все ключи, чей expiration_date (мс Unix‑эпохи) попадает на сегодняшнюю дату UTC.
+    """
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            query = """
+                SELECT *
+                FROM   keys
+                WHERE  date(expiration_date / 1000, 'unixepoch') = date('now', 'utc');
+            """
+            cursor = await db.execute(query)
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Ошибка при получении ключей: {e}")
+        return []
 
 async def add_or_update_user(user_id, username, subscription_type, is_admin, balance, subscription_end, referrer_id=None, promo_days=3):
     """

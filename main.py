@@ -17,9 +17,22 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, BotCommandScopeDefault
 
 from config import API_TOKEN
-from handlers.database import init_db, setup_scheduler
-from handlers.handlers import router, setup_notification_scheduler
+from handlers.database import (
+    init_db,
+    setup_scheduler,
+    delete_all_payment_methods,
+    get_users_without_payment_methods,
+    get_user_transactions
+)
+from handlers.handlers import (
+    router,
+    setup_notification_scheduler,
+    auto_payments_agreement,
+    setup_dp_instance
+)
 from handlers.database import set_bot_instance
+from handlers.payments import get_payment_info
+from handlers.utils import once_per_string
 
 from handlers.scheduler import process_auto_payments
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -205,6 +218,37 @@ class DatabaseConnection:
             logger.error(f"Ошибка при инициализации базы данных: {e}")
             raise
 
+async def payment_method_migration(bot: Bot):
+    """
+    1. Удаляет всем пользователям способ оплаты
+    2. Находит пользователей, у которых нет способов оплаты (всех)
+    3. Для каджого такого пользователя проверяет, был ли способ оплаты сохранён хоть раз
+    3. Рассылает каждому такому пользователю сообщение с согласием на автооплаты
+    4. В сообщении кнопка - автоматически мигрирует его платежные данные
+    """
+    await delete_all_payment_methods()
+    
+    users = await get_users_without_payment_methods()
+
+    for user in users:
+        user_id = user["user_id"]
+        transactions = await get_user_transactions(user_id)
+
+        payment_methods = set()
+        for t in transactions:
+            payment_info = await get_payment_info(t["transaction_id"])
+
+            if payment_info.payment_method.saved:
+                payment_methods.add(payment_info.payment_method)
+        payment_methods = list(payment_methods)
+
+        if payment_methods:
+            await auto_payments_agreement(
+                bot=bot,
+                user_id=user_id,
+                payment_methods=payment_methods
+            )
+
 async def start_bot(bot: Bot, dp: Dispatcher) -> None:
     """
     Запуск бота с предварительной настройкой.
@@ -217,6 +261,11 @@ async def start_bot(bot: Bot, dp: Dispatcher) -> None:
         await set_commands(bot)
         set_bot_instance(bot)
         logger.info("Бот запущен и готов к работе")
+
+        update_string = "Миграция платежных данных"
+        async for _ in once_per_string(update_string):
+            await payment_method_migration(bot)
+
         await dp.start_polling(bot)
     except Exception as e:
         logger.error(f"Критическая ошибка при работе бота: {e}")
@@ -236,6 +285,7 @@ async def main() -> None:
 
     loop = asyncio.get_event_loop()
     setup_signal_handlers(loop)
+    setup_dp_instance(dp)
     
     await DatabaseConnection.initialize()
 

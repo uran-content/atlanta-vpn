@@ -4,8 +4,30 @@ import random
 import re
 import string
 from aiogram import Bot
+import asyncio
+import aiofiles
 
 logger = logging.getLogger(__name__)
+
+lock = asyncio.Lock()
+async def once_per_string(s: str):
+    """
+    Асинхронный генератор, который выполняет yield только при первом вызове с данной строкой.
+    Состояние сохраняется в файле 'seen_strings.txt' для работы после перезапуска программы.
+    """
+    async with lock:
+        # Проверяем, была ли строка уже обработана
+        try:
+            async with aiofiles.open('seen_strings.txt', 'r', encoding='utf-8') as f:
+                seen = set(line.strip() for line in await f.readlines())
+        except FileNotFoundError:
+            seen = set()
+
+        # Если строка новая, добавляем её в файл и выполняем yield
+        if s not in seen:
+            async with aiofiles.open('seen_strings.txt', 'a', encoding='utf-8') as f:
+                await f.write(s + '\n')
+            yield
 
 def extract_key_data(key: str):
     """
