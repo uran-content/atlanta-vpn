@@ -6,6 +6,7 @@ import asyncio
 import logging
 import signal
 import platform
+import sys
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import List
@@ -31,7 +32,7 @@ from handlers.handlers import (
     setup_dp_instance
 )
 from handlers.database import set_bot_instance
-from handlers.payments import get_payment_info
+from handlers.payments import get_payment_info, create_auto_payment
 from handlers.utils import once_per_string
 
 from handlers.scheduler import process_auto_payments
@@ -152,13 +153,15 @@ async def bot_lifecycle(bot: Bot, dp: Dispatcher):
         bot (Bot): Экземпляр бота
         dp (Dispatcher): Экземпляр диспетчера
     """
+    await process_auto_payments(bot)
+
     payScheduler.add_job(
         lambda: process_auto_payments(bot),
         trigger=CronTrigger(hour=10, minute=0),
         id='auto_payments',
         replace_existing=True
     )
-    
+
     # Запуск планировщика
     payScheduler.start()
 
@@ -286,7 +289,7 @@ async def main() -> None:
     loop = asyncio.get_event_loop()
     setup_signal_handlers(loop)
     setup_dp_instance(dp)
-    
+
     await DatabaseConnection.initialize()
 
     async with bot_lifecycle(bot, dp):

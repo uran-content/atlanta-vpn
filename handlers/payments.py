@@ -55,7 +55,6 @@ async def create_auto_payment(amount, description, saved_method_id, email: str =
             "capture": True,
         }
     )
-    print("СДЕЛАЛИ АВТОМАТИЧЕСКИЙ ПЛАТЕЖ")
     return payment.id
 
 async def get_payment_method_id(transaction_id: str) -> str:

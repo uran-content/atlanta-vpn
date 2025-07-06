@@ -249,7 +249,7 @@ async def init_db():
         await _ensure_column_exists(db, "keys", "days", "INTEGER")
 
     print("Инициализация базы данных завершена.")
-    await cleanup_expired_keys()
+    # await cleanup_expired_keys()
     await sync_server_clients_count()
     await add_name_column_to_keys()
     #await add_payment_id_column()
@@ -1683,7 +1683,32 @@ async def get_user_segments(server_address: str = None):
             'server_users': [] if server_address else None
         }
 
-async def remove_expired_keys():
+async def remove_key(key: str, user_id: str):
+    """
+    Удаляет ключ для этого пользователя с сервера и из бызы данных, обновляет счётчик.
+    """
+    from handlers.scheduler import active_jobs
+
+    job_id = f'remove_{key}'
+    active_jobs.remove(job_id)
+
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            try:
+                # Удаляем ключ с сервера
+                await server_remove_key(key, user_id)
+                # Удаляем истекшие ключи из БД
+                await remove_active_key(key, db)
+            except Exception as e:
+                logger.error(f"Ошибка при обработке ключа {key}: {e}")
+                return
+            # Обновляем счетчики ключей у пользователей
+            await update_multiple_keys_count([user_id], db)
+            logger.info(f"Удалён 1 ключ")
+    except Exception as e:
+        logger.error(f"Ошибка при удалении истекших ключей: {e}")
+
+async def remove_expired_keys(excluding_keys: List[str]):
     """
     Удаляет истекшие ключи и обновляет счетчики у пользователей и серверов
     """
@@ -1703,55 +1728,90 @@ async def remove_expired_keys():
                 return
             
             # Обрабатываем каждый истекший ключ
+            user_ids = []
             for key, user_id in expired_keys:
+                if key in excluding_keys:
+                    continue
+
                 try:
-                    # Извлекаем данные из ключа
-                    device, unique_id, unique_uuid, address, parts = extract_key_data(key)
-                    protocol = 'ss' if key.startswith('ss://') else 'vless' 
-                    if address:
-                        # Получаем информацию о сервере
-                        server = await get_server_by_address(address, protocol = protocol)
-                        if server:
-                            try:
-                                # Подключаемся к API сервера
-                                api = AsyncApi(
-                                    f"http://{server['address']}",
-                                    server['username'],
-                                    server['password'],
-                                    use_tls_verify=False
-                                )
-                                await api.login()
+                    await server_remove_key(key, user_id)
+                    user_ids.append(user_id)
 
-                                inbound_id = server['inbound_id']
-                                email = f"{parts[0]}_{parts[1]}_{parts[2]}"
-                                client = await api.client.get_by_email(email)
-                                clients_count = await get_server_count_by_address(address, inbound_id, protocol)
-
-                                # Удаляем клиента с сервера
-                                if protocol == 'vless':
-                                    await api.client.delete(inbound_id=inbound_id, client_uuid=str(unique_uuid))
-                                else:
-                                    await api.client.delete(inbound_id=inbound_id, client_uuid=str(client.email))
-                                logger.info(f"Клиент {unique_uuid} удален с сервера {address}")
-                                
-                                await update_server_clients_count(address, clients_count - 1, inbound_id)
-
-                                logger.info(f"Уменьшено количество клиентов на сервере {address}")
-                            except Exception as e:
-                                logger.error(f"Ошибка при удалении клиента с сервера {address}: {e}")
-
+                    # Удаляем истекшие ключи из БД
+                    await remove_active_key(key, db)
                 except Exception as e:
                     logger.error(f"Ошибка при обработке ключа {key}: {e}")
                     continue
             
-            # Удаляем истекшие ключи из БД
-            await db.execute("""
-                DELETE FROM keys 
-                WHERE expiration_date <= ?
-            """, (current_time,))
-            
             # Обновляем счетчики ключей у пользователей
-            for key, user_id in expired_keys:
+            await update_multiple_keys_count(user_ids, db)
+            
+            logger.info(f"Удалено {len(user_ids)} истекших ключей")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при удалении истекших ключей: {e}")
+
+async def server_remove_key(key: str, user_id: str):
+    """
+    Полностью удаляет указанный ключ и обновляет счетчики у пользователей и серверов
+    """
+    # Извлекаем данные из ключа
+    device, unique_id, unique_uuid, address, parts = extract_key_data(key)
+    protocol = 'ss' if key.startswith('ss://') else 'vless' 
+    if address:
+        # Получаем информацию о сервере
+        server = await get_server_by_address(address, protocol = protocol)
+        if server:
+            try:
+                # Подключаемся к API сервера
+                api = AsyncApi(
+                    f"http://{server['address']}",
+                    server['username'],
+                    server['password'],
+                    use_tls_verify=False
+                )
+                await api.login()
+
+                inbound_id = server['inbound_id']
+                email = f"{parts[0]}_{parts[1]}_{parts[2]}"
+                client = await api.client.get_by_email(email)
+                clients_count = await get_server_count_by_address(address, inbound_id, protocol)
+
+                # Удаляем клиента с сервера
+                if protocol == 'vless':
+                    await api.client.delete(inbound_id=inbound_id, client_uuid=str(unique_uuid))
+                else:
+                    await api.client.delete(inbound_id=inbound_id, client_uuid=str(client.email))
+                logger.info(f"Клиент {unique_uuid} удален с сервера {address}")
+                
+                await update_server_clients_count(address, clients_count - 1, inbound_id)
+
+                logger.info(f"Уменьшено количество клиентов на сервере {address}")
+            except Exception as e:
+                logger.error(f"Ошибка при удалении клиента с сервера {address}: {e}")
+                raise e
+
+async def update_multiple_keys_count(user_ids: List[str], db = None):
+    current_time = int(datetime.now().timestamp() * 1000)
+
+    if db is not None:
+        for user_id in user_ids:
+            cursor = await db.execute("""
+                SELECT COUNT(*) FROM keys 
+                WHERE user_id = ? AND expiration_date >= ?
+            """, (user_id, current_time))
+            new_keys_count = (await cursor.fetchone())[0]
+            
+            await db.execute("""
+                UPDATE users 
+                SET keys_count = ? 
+                WHERE user_id = ?
+            """, (new_keys_count, user_id))
+
+            await db.commit()
+    else:
+        async with aiosqlite.connect(DB_PATH) as db:
+            for user_id in user_ids:
                 cursor = await db.execute("""
                     SELECT COUNT(*) FROM keys 
                     WHERE user_id = ? AND expiration_date >= ?
@@ -1763,13 +1823,9 @@ async def remove_expired_keys():
                     SET keys_count = ? 
                     WHERE user_id = ?
                 """, (new_keys_count, user_id))
-            
-            await db.commit()
-            
-            logger.info(f"Удалено {len(expired_keys)} истекших ключей")
-            
-    except Exception as e:
-        logger.error(f"Ошибка при удалении истекших ключей: {e}")
+
+                await db.commit()
+
 
 def setup_scheduler():
     """
@@ -1778,13 +1834,13 @@ def setup_scheduler():
     scheduler = AsyncIOScheduler()
     
     # Удаление истекших ключей (каждый час)
-    scheduler.add_job(
-        remove_expired_keys,
-        trigger=IntervalTrigger(hours=1),
-        id='remove_expired_keys',
-        name='Remove expired keys',
-        replace_existing=True
-    )
+    # scheduler.add_job(
+    #    remove_expired_keys,
+    #    trigger=IntervalTrigger(hours=1),
+    #    id='remove_expired_keys',
+    #    name='Remove expired keys',
+    #    replace_existing=True
+    #)
     
     # Синхронизация счетчиков клиентов (каждые 15 минут)
     scheduler.add_job(
@@ -2335,8 +2391,12 @@ async def update_server_clients_count(address, count, inbound_id):
         logger.error(f"Ошибка при обновлении счетчика клиентов для {address}: {e}", exc_info=True)
         return False
 
-async def remove_active_key(key):
-    async with aiosqlite.connect(DB_PATH) as db:
+async def remove_active_key(key, db = None):
+    if db is None:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("DELETE FROM keys WHERE key = ?", (key,))
+            await db.commit()
+    else:
         await db.execute("DELETE FROM keys WHERE key = ?", (key,))
         await db.commit()
 
@@ -2377,6 +2437,21 @@ async def add_active_key(user_id, key, device_id, expiration_date, name, price: 
     except Exception as e:
         logger.error(f"Error adding key to database: {e}", exc_info=True)
         raise
+
+async def update_key_days_price(key_str: str, days: int | str, price: int | str):
+    """
+    Обновляет параметры days и price для ключа
+    
+    Args:
+        key_str (str): ключ
+        days (int | str): дни, на сколько ключ действителен
+        price (int | str): цена, за которую пользователь продлевает ключ
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE keys SET days = ?, price = ? WHERE key = ?
+        """, (days, price, key_str))
+        await db.commit()
 
 async def get_users_without_payment_methods():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -2797,7 +2872,7 @@ async def update_subscription(user_id, subscription_type, subscription_end):
 async def update_user_subscription(user_id, new_end_date):
     """
     Обновляет дату окончания подписки для пользователя
-    
+
     Args:
         user_id (int): ID пользователя
         new_end_date (str): Новая дата окончания подписки
@@ -2924,7 +2999,7 @@ async def remove_key_bd(key):
         """, (key,))
         await db.commit()
 
-async def get_all_keys_to_expire_today() -> list[dict]:
+async def get_all_keys_to_expire() -> list[dict]:
     """
     Возвращает все ключи, чей expiration_date (мс Unix‑эпохи) попадает на сегодняшнюю дату UTC.
     """
@@ -2934,7 +3009,7 @@ async def get_all_keys_to_expire_today() -> list[dict]:
             query = """
                 SELECT *
                 FROM   keys
-                WHERE  date(expiration_date / 1000, 'unixepoch') = date('now', 'utc');
+                WHERE  date(expiration_date / 1000, 'unixepoch') <= date('now', 'utc');
             """
             cursor = await db.execute(query)
             rows = await cursor.fetchall()

@@ -7,6 +7,8 @@ from aiogram import Bot
 import asyncio
 import aiofiles
 
+from config import LOG_CHANNELS
+
 logger = logging.getLogger(__name__)
 
 lock = asyncio.Lock()
@@ -173,13 +175,7 @@ async def send_info_for_admins(message: str, admins: list, bot: Bot, username: s
     parts = [message[i : i + MAX_LENGTH] for i in range(0, len(message), MAX_LENGTH)]
     
     # Список доступных лог-каналов
-    log_channels = [
-        "@atlanta_logsss",
-        "@atlanta_logsss2",
-        "@atlanta_logsss3",
-        "@atlanta_logsss4",
-        "@atlanta_logsss5"
-    ]
+    log_channels = LOG_CHANNELS
     
     # Определяем ключ для поиска топика
     cache_key = username if username else "system"

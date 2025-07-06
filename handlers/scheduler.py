@@ -1,8 +1,13 @@
 # handlers.scheduler.py
 import asyncio
 import logging
+from datetime import datetime, timezone, timedelta
+import tzlocal
+
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.jobstores.base import JobLookupError
+from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.cron import CronTrigger
 from aiogram import Bot
 from aiogram.enums import ParseMode
@@ -15,7 +20,9 @@ from handlers.database import (
     get_user_payment_methods,
     update_user_subscription,
     get_admins,
-    get_all_keys_to_expire_today,
+    get_all_keys_to_expire,
+    remove_expired_keys,
+    remove_key,
     get_user
 )
 from handlers.payments import create_auto_payment, check_payment_status
@@ -26,6 +33,16 @@ logger = logging.getLogger(__name__)
 # Удаляем глобальную инициализацию бота
 # bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
+active_jobs = []
+Scheduler = AsyncIOScheduler()
+def remove_job(id: str):
+    if id in active_jobs:
+        try:
+            Scheduler.remove_job(id)
+            active_jobs.remove(id)
+        except JobLookupError as e:
+            logger.warning(f"По какой-то причине не нашли работу: {id}")
+
 async def process_auto_payments(bot=None):
     """
     Основная функция для обработки автоматических платежей
@@ -34,6 +51,9 @@ async def process_auto_payments(bot=None):
         bot (Bot, optional): Экземпляр бота для отправки уведомлений
     """
     logger.info("Запуск процесса автоматических платежей")
+
+    if not Scheduler.running:
+        Scheduler.start()
     
     try:
         # Если бот не передан, создаем временный экземпляр
@@ -42,9 +62,9 @@ async def process_auto_payments(bot=None):
             need_to_close = True
         else:
             need_to_close = False
-            
+        
         # Получаем всех пользователей с подпиской
-        keys = await get_all_keys_to_expire_today()
+        keys = await get_all_keys_to_expire()
 
         if not keys:
             logger.info("Нет ключей, которые истекают сегодня")
@@ -69,6 +89,27 @@ async def process_auto_payments(bot=None):
             success = await process_key_payment(key, bot)
             if success:
                 payment_count += 1
+
+                key_str = key["key"]
+                job_id = f'remove_{key_str}'
+                
+                remove_job(job_id)
+            else:
+                key_str = key["key"]
+                user_id = key["user_id"]
+
+                run_time = datetime.now(tz=tzlocal.get_localzone()) + timedelta(days=1)
+                
+                job_id = f'remove_{key_str}'
+                job = Scheduler.add_job(
+                    remove_key,
+                    trigger=DateTrigger(run_date=run_time),
+                    id=job_id,
+                    name=f'Remove_{key_str}',
+                    replace_existing=True,
+                    args=[key_str, user_id]
+                )
+                active_jobs.append(job_id)
                     
             # Небольшая пауза между обработкой пользователей
             await asyncio.sleep(1)
@@ -120,12 +161,13 @@ async def process_key_payment(key, bot: Bot) -> bool:
 
         need_to_excuse = False
         if key["price"] is None:
-            need_to_excuse = True
-        key_price = int(key["price"]) if key["price"] else 1
-        days = int(key["days"]) if key["days"] else 1
+            from handlers.handlers import ask_for_key_period
+            await ask_for_key_period(key, user_id, bot)
+            return False
+        
+        key_price = int(key["price"])
+        days = int(key["days"])
 
-        print(f'balance = {user_info["balance"]}')
-        print(f'key_price = {key_price}')
         if int(user_info["balance"]) >= key_price:
             payment_attempts += 1
             await pay_with_int_balance(user_id, int(user_info["balance"]), key_price)
@@ -340,7 +382,7 @@ async def send_manual_renewal_notification(user_id, subscription_end, bot: Bot):
     """
     try:
         # Форматируем дату для отображения
-        formatted_date = datetime.fromisoformat(subscription_end).strftime("%d.%m.%Y")
+        formatted_date = subscription_end
         
         message = (
             f"⚠️ <b>Срок действия подписки истекает сегодня</b>\n\n"

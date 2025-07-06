@@ -1,23 +1,8 @@
-from handlers.utils import once_per_string
-import asyncio
+from datetime import datetime
+import pytz
 
-async def main():
-    s = "строка 1"
-
-    z = False
-    async for _ in once_per_string(s):
-        z = True
-    
-    if z:
-        print("Зашли!")
-    else:
-        print("НЕ ЗАШЛИ!!")
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Бот остановлен пользователем")
-    except Exception as e:
-        print(f"Критическая ошибка: {e}")
-        raise
+# Устанавливаем дату 6 июля 2025 года, 00:00:00 UTC
+date = datetime(2025, 7, 6, 0, 0, 0, tzinfo=pytz.UTC)
+# Преобразуем в метку времени Unix в миллисекундах
+timestamp_ms = int(date.timestamp() * 1000)
+print(timestamp_ms)
