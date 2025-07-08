@@ -2804,11 +2804,14 @@ async def update_key_name(key: str, new_name: str) -> bool:
         logger.error(f"Ошибка при обновлении имени ключа: {e}")
         return False
     
-async def get_user_keys(user_id):
+async def get_user_keys(user_id, to_dict: bool = False):
     """
     Получает список всех ключей пользователя
     """
     async with aiosqlite.connect(DB_PATH) as db:
+        if to_dict:
+            db.row_factory = aiosqlite.Row
+
         cursor = await db.execute(
             "SELECT key, device_id, expiration_date, name FROM keys WHERE user_id = ?", 
             (user_id,)

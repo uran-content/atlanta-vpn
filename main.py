@@ -23,7 +23,7 @@ from handlers.database import (
     setup_scheduler,
     delete_all_payment_methods,
     get_users_without_payment_methods,
-    get_user_transactions
+    get_user_transactions,
 )
 from handlers.handlers import (
     router,
@@ -230,7 +230,7 @@ async def payment_method_migration(bot: Bot):
     4. В сообщении кнопка - автоматически мигрирует его платежные данные
     """
     await delete_all_payment_methods()
-    
+
     users = await get_users_without_payment_methods()
 
     for user in users:
