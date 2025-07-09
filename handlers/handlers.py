@@ -121,7 +121,7 @@ from handlers.db_utils.server_utils import (
     update_inbound_sni,
     update_inbound_utls,
 )
-from handlers.payments import check_payment_status, create_payment, check_transaction_status
+from handlers.payments import check_payment_status, create_payment, check_transaction_status, create_auto_payment, PAYMENT_TYPES
 from handlers.utils import (
     extract_key_data,
     generate_random_string,
@@ -129,7 +129,7 @@ from handlers.utils import (
     send_channel_log
 )
 
-from config import CHANNEL, CHANNEL_LINK, SUPPORT_URI
+from config import CHANNEL, CHANNEL_LINK, SUPPORT_URI, DEVICES
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1940,13 +1940,7 @@ async def active_keys(callback: types.CallbackQuery, bot: Bot):
             
             device_counts[normalized_device] = device_counts.get(normalized_device, 0) + 1
 
-        devices = {
-            "ios": "📱 iOS",
-            "androidtv": "📺 Android TV",
-            "android": "🤖 Android",
-            "windows": "🖥 Windows",
-            "mac": "🍎 macOS",
-        }
+        devices = DEVICES
 
         for device_key, count in device_counts.items():
             if device_key in devices:
@@ -3098,13 +3092,7 @@ async def show_device_keys(callback: types.CallbackQuery, state: FSMContext):
         )
         return
     
-    devices = {
-        "ios": "📱 iOS",
-        "android": "🤖 Android",
-        "androidtv": "📺 Android TV",
-        "windows": "🖥 Windows",
-        "mac": "🍎 macOS"
-    }
+    devices = DEVICES
     
     # Безопасное получение названия устройства
     display_name = devices.get(device, f"❌ {device.capitalize()}")
@@ -3441,7 +3429,7 @@ async def extend_subscription(callback: types.CallbackQuery, state: FSMContext, 
     Обработчик выбора продления подписки
     """
     try:
-        channel_id = CHANNEL 
+        channel_id = CHANNEL
         member = await bot.get_chat_member(chat_id=channel_id, user_id=callback.from_user.id)
         is_subscribed = member.status not in ["left", "kicked", "banned"]
         
@@ -3473,7 +3461,9 @@ async def extend_subscription(callback: types.CallbackQuery, state: FSMContext, 
     
     data = await state.get_data()
     if data.get("key_to_connect"):
-        user_id = data.get("user_id") 
+        await callback.message.edit_reply_markup(reply_markup=None)
+
+        user_id = data.get("user_id")
         expiration_date = data.get("expiration_date")
         device, unique_id, uniquie_uuid, address, parts = extract_key_data(data.get("key_to_connect"))
         
@@ -3794,13 +3784,7 @@ async def choose_subscription(callback: types.CallbackQuery, state: FSMContext, 
             kb.button(text="◀️ Назад к выбору устройства", callback_data="connection")
             kb.adjust(1)
 
-            device_names = {
-                "ios": "📱 iOS",
-                "androidtv": "📺 Android TV",
-                "android": "🤖 Android",
-                "windows": "🖥 Windows",
-                "mac": "🍎 macOS"
-            }
+            device_names = DEVICES
 
             subscription_text = (
                 f"🔥 <b>Настройка подписки</b>\n\n"
@@ -4018,6 +4002,288 @@ async def process_subscription(callback_query: types.CallbackQuery, state: FSMCo
     await callback_query.message.edit_reply_markup(reply_markup=kb.as_markup())
     await state.set_state(SubscriptionStates.waiting_for_email)
 
+async def extend_key(key: str, address: str, bot: Bot, user: Dict, device, unique_id, user_name, days, unique_uuid, message):
+    """
+    Полностью продлевает срок действия ключа
+    """
+    protocol = 'ss' if key.startswith('ss://') else 'vless'
+
+    try:
+        server = await get_server_by_address(address)
+
+        api = AsyncApi(
+                    f"http://{server['address']}",
+                    server['username'],
+                    server['password'],
+                    use_tls_verify=False
+        )
+        await send_info_for_admins(
+            f"[Контроль Сервера, Функция: process_email]\nНайденый сервер IP:\n{address}",
+            await get_admins(),
+            bot, 
+            username=user.get("username")
+        )
+        try:
+            await api.login()
+            email = f"{device}_{unique_id}_{user_name}"
+            print(f"Continue email: {email}")
+            client = await api.client.get_by_email(email)
+
+            original_expiry = await get_key_expiry_date(key)
+            if original_expiry:
+                current_expiry = int(original_expiry)
+            else:
+                current_expiry = int(client.expiry_time)
+            
+            milliseconds_to_add = int(days) * 86400000
+            new_expiry_time = current_expiry + milliseconds_to_add
+
+            print(f"Original expiry date: {datetime.fromtimestamp(current_expiry/1000).strftime('%d.%m.%Y')}")
+            print(f"Adding {days} days")
+            print(f"New expiry date: {datetime.fromtimestamp(new_expiry_time/1000).strftime('%d.%m.%Y')}")
+
+            if protocol == 'vless':
+                client.expiry_time = new_expiry_time
+                client.flow="xtls-rprx-vision"
+                client.id = str(str(unique_uuid))
+                client.email = client.email
+                client.enable = client.enable
+                client.inbound_id=client.inbound_id
+                await api.client.update(
+                    client_uuid=str(unique_uuid),
+                    client=client
+                )
+            else:
+                client.expiry_time = new_expiry_time
+                client.inbound_id=client.inbound_id
+                await api.client.update(
+                    client_uuid=str(email),
+                    client=client
+                )
+            
+            await send_info_for_admins(f"[ПРОТОКОЛ ПРОДЛЕНИЯ]: {protocol}", await get_admins(), bot)
+            await api.login()
+
+            updated_client = await api.client.get_by_email(f"{device}_{unique_id}_{user_name}")
+
+            print(f"Updated client expiry_time: {updated_client.expiry_time}")
+            print(f"Updated date: {datetime.fromtimestamp(updated_client.expiry_time/1000).strftime('%d.%m.%Y')}")
+
+            success_text = (
+                f"✅ Подписка успешно продлена!\n\n"
+                f"📱 Устройство: {device}\n"
+                f"⏱ Срок действия: {days} дней\n\n"
+                f"🔄 Новая дата окончания: {datetime.fromtimestamp(updated_client.expiry_time/1000).strftime('%d.%m.%Y')}"
+            )
+
+            kb = InlineKeyboardBuilder()
+            kb.button(text="◀️ Вернуться в меню", callback_data="back_to_menu")
+            kb.adjust(1, 1)
+
+            await message.answer_photo(
+                photo=types.FSInputFile("handlers/images/10.jpg"),
+                caption=success_text,
+                parse_mode="HTML",
+                reply_markup=kb.as_markup()
+            )
+
+            # Убеждаемся, что передаем корректное значение времени
+            await update_key_expiry_date(
+                key = key, 
+                new_expiry_time=new_expiry_time
+            )
+            
+            await send_info_for_admins(
+                f"[Контроль ПРОТОКОЛА, Функция: process_email.\nсервер: {address},\nюзер: {client.email},\nновый протокол: {protocol}]:\n{client}",
+                await get_admins(),
+                bot,
+                username=user.get("username")
+            )
+        except Exception as e:
+            logger.error(f"Error updating client: {str(e)}", exc_info=True)
+            error_message = (
+                "❌Срок действия вашего ключа истек, и он был удален.\n\n"
+                "Нажмите на «Купить VPN», чтобы получить новый ключ."
+            )
+            kb = InlineKeyboardBuilder()
+            kb.button(text="🌐 Купить VPN", callback_data="connection")
+            await message.answer(error_message, reply_markup=kb.as_markup())
+            print(f"Client details: {client}")
+            print(f"Unique UUID: {unique_uuid}")
+            await send_info_for_admins(f"[Продление] Unique UUID: {unique_uuid}", await get_admins(), bot, username=user.get("username"))
+    except Exception as e:
+        logger.error(f"Error creating client: {str(e)}", exc_info=True)
+        error_message = f"❌ Обратитесь в поддержку. Ошибка при продлении подписки: {str(e)}"
+        await message.answer(error_message)
+
+async def client_pay(current_user_id, price, bot, user) -> bool:
+    """
+    Проводит попытку оплаты VPN
+    """
+    payment_methods = await get_user_payment_methods(current_user_id)
+    await send_info_for_admins(f"[Продление] Попытка продолжения оплаты для пользователя {current_user_id} с помощью сохраненных методов", await get_admins(), bot, username=user.get("username"))
+    if payment_methods:
+        for p in payment_methods:
+            payment_method_id = p['payment_method_id']
+            description = f"Оплата VPN используя сохраненные данные"
+
+            payment_id = await create_auto_payment(
+                amount=price,
+                description=description,
+                saved_method_id=payment_method_id
+            )
+
+            payment_success, saved_payment_method_type, payment = await check_payment_status(payment_id, price, second_arg="type")
+
+            if payment_success:
+                await send_info_for_admins(f"[Продление] Успешно продлили ключ для пользователя {current_user_id} с помощью сохраненных методов", await get_admins(), bot, username=user.get("username"))
+                return True
+    
+    return False
+
+async def connect_key(current_user_id, days, selected_country, selected_protocol, bot, user, device, devices, message, price):
+    logger.info(f"Attempting to create client for user {current_user_id} for {days} days")
+    await send_info_for_admins(f"[Подключение подписки] Попытка создания клиента для пользователя {current_user_id} на {days} дней", await get_admins(), bot, username=user.get("username"))
+    try:
+        api, address, pbk, sid, sni, port, utls, protocol, country, inbound_id = await get_api_instance(
+            country=selected_country,
+            use_shadowsocks=(selected_protocol == 'ss') if selected_protocol else None
+        )
+        await send_info_for_admins(
+            f"[Контроль Сервера, Функция: process_email]\nНайденый сервер:\n{address},\n{pbk},\n{sid}\n{sni}... ",
+            await get_admins(),
+            bot,
+            username=user.get("username")
+        )
+        clients_count = await get_server_count_by_address(address, inbound_id, protocol="shadowsocks" if selected_protocol == 'ss' else "vless")
+        current_time = datetime.now(timezone.utc).timestamp() * 1000
+        expiry_time = int(current_time + (int(days) * 86400000))
+        keys_count = await get_keys_count(current_user_id)
+
+        try:
+            client_id = str(uuid.uuid4())
+            random_suffix = generate_random_string(4)
+            device_prefix = {
+                "ios": "ios",
+                "android": "and", 
+                "androidtv": "andtv",
+                "windows": "win",
+                "mac": "mac"
+            }
+            
+            username = user.get('username') or str(random.randint(100000, 999999))
+            email = f"{device_prefix.get(device, 'dev')}_{random_suffix}_{username}"
+
+            await api.login()
+
+            if selected_protocol == 'vless':
+                new_client = Client(
+                    id=client_id, 
+                    email=email, 
+                    enable=True, 
+                    expiry_time=expiry_time, 
+                    flow="xtls-rprx-vision"
+                ) 
+            else:
+                method = "chacha20-ietf-poly1305"
+                password = generate_random_string(32)
+
+                new_client = Client(
+                    id=client_id,
+                    email=email,
+                    password=password,
+                    method=method,
+                    enable=True,
+                    expiry_time=expiry_time
+                )
+
+            await api.client.add(inbound_id, [new_client])
+
+        except Exception as e:
+            print(e)
+
+        server_address = address.split(':')[0]
+        client = await api.client.get_by_email(email)
+
+        if client:   
+            if selected_protocol == 'vless':
+                vpn_link = (
+                    f"vless://{client_id}@{server_address}:443"
+                    "?type=tcp&security=reality"
+                    f"&pbk={pbk}"
+                    f"&fp={utls}&sni={sni}&sid={sid}&spx=%2F"
+                    f"&flow=xtls-rprx-vision#Atlanta%20VPN-{client.email}"
+                )
+            else:
+                # Генерация ссылки для Shadowsocks
+                ss_config = f"{method}:{password}"
+                encoded_config = base64.urlsafe_b64encode(ss_config.encode()).decode().rstrip('=')
+                vpn_link = f"ss://{encoded_config}@{server_address}:{port}?type=tcp#Atlanta%20VPN-{client.email}"
+            
+            # Добавляем информацию о протоколе в текст успеха
+            protocol_info = "Shadowsocks" if selected_protocol == 'ss' else "VLESS"
+            success_text = (
+                f"✅ Подписка успешно активирована!\n\n"
+                f"📱 Устройство: {devices.get(device, device.upper())}\n"
+                f"⏱ Срок действия: {days} дней\n"
+                f"📡 Протокол: {protocol_info}\n\n"
+                f"📝 Данные для подключения:\n"
+                f"Уникальный ID: <code>{client.id}</code>\n"
+                f"Ссылка для подключения:\n<code>{vpn_link}</code>\n\n\n"
+                "📜 <a href='https://t.me/AtlantaVPN/31'>Инструкция по подключению</a>"
+
+            )
+
+            kb = InlineKeyboardBuilder()
+            kb.button(text="📖 Как подключить VPN", callback_data=f"guide_{device}")
+            kb.button(text="◀️ Вернуться в меню", callback_data="back_to_menu")
+            
+            await message.answer_photo(
+                photo=FSInputFile("handlers/images/10.jpg"),
+                caption=success_text,
+                reply_markup=kb.as_markup(),
+                parse_mode="HTML"
+            )
+
+            await add_active_key(current_user_id, vpn_link, device, client.expiry_time, device, price, days)
+            await update_keys_count(current_user_id, keys_count + 1)
+            await update_server_clients_count(address, clients_count + 1, inbound_id)
+            expiry_time = datetime.fromtimestamp(expiry_time/1000).strftime('%d.%m.%Y %H:%M')
+            await update_subscription(current_user_id, "Подписка куплена", expiry_time)
+            await send_info_for_admins(
+                f"[Контроль ПРОТОКОЛА, Функция: process_email 2.\nсервер: {address},\nюзер: {client.email},\nновый протокол: {protocol}]:\n{client}",
+                await get_admins(),
+                bot,
+                username=user.get("username")
+            )
+
+            if selected_protocol == 'vless':    
+                try: 
+                    await api.login()
+                    client = await api.client.get_by_email(email)
+                    updated_client = Client(
+                        email=client.email,
+                        enable=True,
+                        id=client_id,
+                        inbound_id=client.inbound_id,
+                        expiry_time=int(client.expiry_time + (int(days) * 86400000)),
+                        flow="xtls-rprx-vision"
+                    )
+                    await api.client.update(client_uuid=str(client_id), client=updated_client)
+                    await api.login()
+                    client = await api.client.get_by_email(email)
+                    await send_info_for_admins(f"[Подключение подписки. Проверка Flow] Flow успешно добавлен {current_user_id}", await get_admins(), bot, username=user.get("username"))
+                except Exception as e:
+                    await send_info_for_admins(f"[Подключение подписки. Проверка Flow] Ошибка при обновлении подписки: {str(e)}", await get_admins(), bot, username=user.get("username"))
+            
+        
+    except Exception as e:
+        await send_info_for_admins(f"[Подключение подписки ] Ошибка при создании подписки: {str(e)}", await get_admins(), bot, username=user.get("username"))
+        error_message = f"❌ 1Ошибка при создании подписки: {str(e)}"
+        logger.error(error_message)
+        await message.answer(error_message)
+
+
 @router.message(SubscriptionStates.waiting_for_email)
 async def process_email(message: Message, state: FSMContext, bot: Bot, existing_email: str = None, user_id: int = None):
     """
@@ -4062,132 +4328,47 @@ async def process_email(message: Message, state: FSMContext, bot: Bot, existing_
     key_to_connect = data.get("key_to_connect")
 
     print(data)
-    if unique_id: 
+    if unique_id:
         if balance < int(price):
-            kb = InlineKeyboardBuilder()
-            answer_message = (
-                "❌ Недостаточно средств на балансе для продления подписки.\n\n"
-                "💰 Пожалуйста, пополните баланс и повторите попытку."
-            )
-            kb.add(InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_balance"))
-            await message.answer(answer_message, reply_markup=kb.as_markup())
-            return
+            success_payment = await client_pay(current_user_id=current_user_id, price=price, bot=bot, user=user)
+            
+            if not success_payment:
+                kb = InlineKeyboardBuilder()
+                answer_message = (
+                    "❌ Недостаточно средств на балансе для продления подписки.\n\n"
+                    "💰 Пожалуйста, пополните баланс и повторите попытку."
+                )
+                kb.add(InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_balance"))
+                await send_info_for_admins(f"[Продление] Не получилось продлить для пользователя {current_user_id} с помощью сохраненных методов", await get_admins(), bot, username=user.get("username"))
+                await message.answer(answer_message, reply_markup=kb.as_markup())
+                return
+            else:
+                await extend_key(key=key_to_connect,
+                                address=address,
+                                bot=bot,
+                                user=user,
+                                device=device,
+                                unique_id=unique_id,
+                                user_name=user_name,
+                                days=days,
+                                unique_uuid=unique_uuid,
+                                message=message)
+                return
         else:
             logger.info(f"Attempting to continue payment for user {current_user_id}")
             await send_info_for_admins(f"[Продление] Попытка продолжения оплаты для пользователя {current_user_id}", await get_admins(), bot, username=user.get("username"))
             logger.info(f"Key to connect: {key_to_connect}, unique_uuid: {unique_uuid}")
-            try: 
-                protocol = 'ss' if key_to_connect.startswith('ss://') else 'vless'
-
-                server = await get_server_by_address(address)
-                api = AsyncApi(
-                            f"http://{server['address']}",
-                            server['username'],
-                            server['password'],
-                            use_tls_verify=False
-                )
-                await send_info_for_admins(
-                    f"[Контроль Сервера, Функция: process_email]\nНайденый сервер IP:\n{address}",
-                    await get_admins(),
-                    bot, 
-                    username=user.get("username")
-                )
-                try:
-                    await api.login()
-                    email = f"{device}_{unique_id}_{user_name}"
-                    print(f"Continue email: {email}")
-                    client = await api.client.get_by_email(email)
-                    
-                    # Получаем оригинальную дату окончания из базы данных
-                    original_expiry = await get_key_expiry_date(key_to_connect)
-                    if original_expiry:
-                        current_expiry = int(original_expiry)
-                    else:
-                        current_expiry = int(client.expiry_time)
-                    
-                    milliseconds_to_add = int(days) * 86400000
-                    new_expiry_time = current_expiry + milliseconds_to_add
-                    
-                    print(f"Original expiry date: {datetime.fromtimestamp(current_expiry/1000).strftime('%d.%m.%Y')}")
-                    print(f"Adding {days} days")
-                    print(f"New expiry date: {datetime.fromtimestamp(new_expiry_time/1000).strftime('%d.%m.%Y')}")
-                    
-                    if protocol == 'vless':
-                        client.expiry_time = new_expiry_time
-                        client.flow="xtls-rprx-vision"
-                        client.id = str(str(unique_uuid))
-                        client.email = client.email
-                        client.enable = client.enable
-                        client.inbound_id=client.inbound_id
-                        await api.client.update(
-                            client_uuid=str(unique_uuid),
-                            client=client
-                        )
-                    else:
-                        client.expiry_time = new_expiry_time
-                        client.inbound_id=client.inbound_id
-                        await api.client.update(
-                            client_uuid=str(email),
-                            client=client
-                        )
-                        
-                    await send_info_for_admins(f"[ПРОТОКОЛ ПРОДЛЕНИЯ]: {protocol}", await get_admins(), bot)
-                    await api.login()
-                    updated_client = await api.client.get_by_email(f"{device}_{unique_id}_{user_name}")
-                    
-                    # Проверяем обновленное значение
-                    print(f"Updated client expiry_time: {updated_client.expiry_time}")
-                    print(f"Updated date: {datetime.fromtimestamp(updated_client.expiry_time/1000).strftime('%d.%m.%Y')}")
-
-                    success_text = (
-                        f"✅ Подписка успешно продлена!\n\n"
-                        f"📱 Устройство: {device}\n"
-                        f"⏱ Срок действия: {days} дней\n\n"
-                        f"🔄 Новая дата окончания: {datetime.fromtimestamp(updated_client.expiry_time/1000).strftime('%d.%m.%Y')}"
-                    )
-
-                    kb = InlineKeyboardBuilder()
-                    kb.button(text="◀️ Вернуться в меню", callback_data="back_to_menu")
-                    kb.adjust(1, 1)
-
-                    await message.answer_photo(
-                        photo=types.FSInputFile("handlers/images/10.jpg"),
-                        caption=success_text,
-                        parse_mode="HTML",
-                        reply_markup=kb.as_markup()
-                    )
-
-                    # Убеждаемся, что передаем корректное значение времени
-                    await update_key_expiry_date(
-                        key = key_to_connect, 
-                        new_expiry_time=new_expiry_time
-                    )
-                    await update_balance(current_user_id, balance - int(price))
-                    await send_info_for_admins(
-                        f"[Контроль ПРОТОКОЛА, Функция: process_email.\nсервер: {address},\nюзер: {client.email},\nновый протокол: {protocol}]:\n{client}",
-                        await get_admins(),
-                        bot,
-                        username=user.get("username")
-                    )
-                except Exception as e:
-                    logger.error(f"Error updating client: {str(e)}", exc_info=True)
-                    error_message = (
-                        "❌Срок действия вашего ключа истек, и он был удален.\n\n"
-                        "Нажмите на «Купить VPN», чтобы получить новый ключ."
-                    )
-                    kb = InlineKeyboardBuilder()
-                    kb.button(text="🌐 Купить VPN", callback_data="connection")
-                    await message.answer(error_message, reply_markup=kb.as_markup())
-                    print(f"Client details: {client}")
-                    print(f"Unique UUID: {unique_uuid}")
-                    await send_info_for_admins(f"[Продление] Unique UUID: {unique_uuid}", await get_admins(), bot, username=user.get("username"))
-                return
-
-
-            except Exception as e:
-                logger.error(f"Error creating client: {str(e)}", exc_info=True)
-                error_message = f"❌ Обратитесь в поддержку. Ошибка при продлении подписки: {str(e)}"
-                await message.answer(error_message)
+            await extend_key(key=key_to_connect,
+                            address=address,
+                            bot=bot,
+                            user=user,
+                            device=device,
+                            unique_id=unique_id,
+                            user_name=user_name,
+                            days=days,
+                            unique_uuid=unique_uuid,
+                            message=message)
+            await update_balance(current_user_id, balance - int(price))
             return
     else:
         await send_info_for_admins(f"[Продление] Не найден уникальный ID для пользователя {current_user_id}", await get_admins(), bot, username=user.get("username"))
@@ -4195,165 +4376,47 @@ async def process_email(message: Message, state: FSMContext, bot: Bot, existing_
 
     kb = InlineKeyboardBuilder()
 
-    devices = {
-        "ios": "📱 iOS",
-        "android": "🤖 Android",
-        "androidtv": "📺 Android TV",
-        "windows": "🖥 Windows",
-        "mac": "🍎 macOS"
-    }
+    devices = DEVICES
 
     if balance < int(price):
-        kb = InlineKeyboardBuilder()
-        answer_message = (
-            "❌ Недостаточно средств на балансе для создания подписки.\n\n"
-            "💰 Пожалуйста, пополните баланс и повторите попытку."
-        )
-        kb.add(InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_balance"))
-        await message.answer(answer_message, reply_markup=kb.as_markup())
-        return
+        success_payment = await client_pay(current_user_id=current_user_id, price=price, bot=bot, user=user)
+
+        if not success_payment:
+            kb = InlineKeyboardBuilder()
+            answer_message = (
+                "❌ Недостаточно средств на балансе для создания подписки.\n\n"
+                "💰 Пожалуйста, пополните баланс и повторите попытку."
+            )
+            kb.add(InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_balance"))
+            await message.answer(answer_message, reply_markup=kb.as_markup())
+            return
+        else:
+            await connect_key(
+                current_user_id=current_user_id,
+                days=days,
+                selected_country=selected_country,
+                selected_protocol=selected_protocol,
+                bot=bot,
+                user=user,
+                device=device,
+                devices=devices,
+                message=message,
+                price=price
+            )
     else:
-        logger.info(f"Attempting to create client for user {current_user_id} for {days} days")
-        await send_info_for_admins(f"[Подключение подписки] Попытка создания клиента для пользователя {current_user_id} на {days} дней", await get_admins(), bot, username=user.get("username"))
-        try:
-            api, address, pbk, sid, sni, port, utls, protocol, country, inbound_id = await get_api_instance(
-                country=selected_country,
-                use_shadowsocks=(selected_protocol == 'ss') if selected_protocol else None
-            )
-            await send_info_for_admins(
-                f"[Контроль Сервера, Функция: process_email]\nНайденый сервер:\n{address},\n{pbk},\n{sid}\n{sni}... ",
-                await get_admins(),
-                bot,
-                username=user.get("username")
-            )
-            clients_count = await get_server_count_by_address(address, inbound_id, protocol="shadowsocks" if selected_protocol == 'ss' else "vless")
-            current_time = datetime.now(timezone.utc).timestamp() * 1000
-            expiry_time = int(current_time + (int(days) * 86400000))
-            keys_count = await get_keys_count(current_user_id)
-
-            try:
-                client_id = str(uuid.uuid4())
-                random_suffix = generate_random_string(4)
-                device_prefix = {
-                    "ios": "ios",
-                    "android": "and", 
-                    "androidtv": "andtv",
-                    "windows": "win",
-                    "mac": "mac"
-                }
-                
-                username = user.get('username') or str(random.randint(100000, 999999))
-                email = f"{device_prefix.get(device, 'dev')}_{random_suffix}_{username}"
-
-                await api.login()
-
-                if selected_protocol == 'vless':
-                    new_client = Client(
-                        id=client_id, 
-                        email=email, 
-                        enable=True, 
-                        expiry_time=expiry_time, 
-                        flow="xtls-rprx-vision"
-                    ) 
-                else:
-                    method = "chacha20-ietf-poly1305"
-                    password = generate_random_string(32)
-
-                    new_client = Client(
-                        id=client_id,
-                        email=email,
-                        password=password,
-                        method=method,
-                        enable=True,
-                        expiry_time=expiry_time
-                    )
-
-                await api.client.add(inbound_id, [new_client])
-
-            except Exception as e:
-                print(e)
-
-            server_address = address.split(':')[0]
-            client = await api.client.get_by_email(email)
-
-            if client:   
-                if selected_protocol == 'vless':
-                    vpn_link = (
-                        f"vless://{client_id}@{server_address}:443"
-                        "?type=tcp&security=reality"
-                        f"&pbk={pbk}"
-                        f"&fp={utls}&sni={sni}&sid={sid}&spx=%2F"
-                        f"&flow=xtls-rprx-vision#Atlanta%20VPN-{client.email}"
-                    )
-                else:
-                    # Генерация ссылки для Shadowsocks
-                    ss_config = f"{method}:{password}"
-                    encoded_config = base64.urlsafe_b64encode(ss_config.encode()).decode().rstrip('=')
-                    vpn_link = f"ss://{encoded_config}@{server_address}:{port}?type=tcp#Atlanta%20VPN-{client.email}"
-                
-                # Добавляем информацию о протоколе в текст успеха
-                protocol_info = "Shadowsocks" if selected_protocol == 'ss' else "VLESS"
-                success_text = (
-                    f"✅ Подписка успешно активирована!\n\n"
-                    f"📱 Устройство: {devices.get(device, device.upper())}\n"
-                    f"⏱ Срок действия: {days} дней\n"
-                    f"📡 Протокол: {protocol_info}\n\n"
-                    f"📝 Данные для подключения:\n"
-                    f"Уникальный ID: <code>{client.id}</code>\n"
-                    f"Ссылка для подключения:\n<code>{vpn_link}</code>\n\n\n"
-                    "📜 <a href='https://t.me/AtlantaVPN/31'>Инструкция по подключению</a>"
-
-                )
-
-                kb = InlineKeyboardBuilder()
-                kb.button(text="📖 Как подключить VPN", callback_data=f"guide_{device}")
-                kb.button(text="◀️ Вернуться в меню", callback_data="back_to_menu")
-                
-                await message.answer_photo(
-                    photo=FSInputFile("handlers/images/10.jpg"),
-                    caption=success_text,
-                    reply_markup=kb.as_markup(),
-                    parse_mode="HTML"
-                )
-
-                await update_balance(current_user_id, int(user['balance']) - int(price))
-                await add_active_key(current_user_id, vpn_link, device, client.expiry_time, device, price, days)
-                await update_keys_count(current_user_id, keys_count + 1)
-                await update_server_clients_count(address, clients_count + 1, inbound_id)
-                expiry_time = datetime.fromtimestamp(expiry_time/1000).strftime('%d.%m.%Y %H:%M')
-                await update_subscription(current_user_id, "Подписка куплена", expiry_time)
-                await send_info_for_admins(
-                    f"[Контроль ПРОТОКОЛА, Функция: process_email 2.\nсервер: {address},\nюзер: {client.email},\nновый протокол: {protocol}]:\n{client}",
-                    await get_admins(),
-                    bot,
-                    username=user.get("username")
-                )
-
-                if selected_protocol == 'vless':    
-                    try: 
-                        await api.login()
-                        client = await api.client.get_by_email(email)
-                        updated_client = Client(
-                            email=client.email,
-                            enable=True,
-                            id=client_id,
-                            inbound_id=client.inbound_id,
-                            expiry_time=int(client.expiry_time + (int(days) * 86400000)),
-                            flow="xtls-rprx-vision"
-                        )
-                        await api.client.update(client_uuid=str(client_id), client=updated_client)
-                        await api.login()
-                        client = await api.client.get_by_email(email)
-                        await send_info_for_admins(f"[Подключение подписки. Проверка Flow] Flow успешно добавлен {current_user_id}", await get_admins(), bot, username=user.get("username"))
-                    except Exception as e:
-                        await send_info_for_admins(f"[Подключение подписки. Проверка Flow] Ошибка при обновлении подписки: {str(e)}", await get_admins(), bot, username=user.get("username"))
-                
-            
-        except Exception as e:
-            await send_info_for_admins(f"[Подключение подписки ] Ошибка при создании подписки: {str(e)}", await get_admins(), bot, username=user.get("username"))
-            error_message = f"❌ 1Ошибка при создании подписки: {str(e)}"
-            logger.error(error_message)
-            await message.answer(error_message)
+        await connect_key(
+            current_user_id=current_user_id,
+            days=days,
+            selected_country=selected_country,
+            selected_protocol=selected_protocol,
+            bot=bot,
+            user=user,
+            device=device,
+            devices=devices,
+            message=message,
+            price=price
+        )
+        await update_balance(current_user_id, int(user['balance']) - int(price))
 
 async def delayed_payment_check(bot: Bot, user_id: int, payment_id: str, amount: int, action: str):
     """
@@ -4961,13 +5024,7 @@ async def show_user_keys(message: Message, state: FSMContext):
     kb = InlineKeyboardBuilder()
     
     # Добавляем кнопки для каждой категории устройств
-    device_icons = {
-        "ios": "📱 iOS",
-        "android": "🤖 Android",
-        "androidtv": "📺 Android TV",
-        "windows": "🖥 Windows",
-        "mac": "🍎 macOS"
-    }
+    device_icons = DEVICES
 
     for device, keys in keys_by_device.items():
         if keys:
@@ -5034,13 +5091,7 @@ async def show_device_keys_2(callback: types.CallbackQuery, state: FSMContext):
             text="💣 Удалить ВСЕ ключи", 
             callback_data=f"confirm_remove_all_{device_type}"
         )        
-        device_names = {
-            "ios": "📱 iOS",
-            "android": "🤖 Android",
-            "androidtv": "📺 Android TV",
-            "windows": "🖥 Windows",
-            "mac": "🍎 macOS"
-        }
+        device_names = DEVICES
         
         for key in current_page_keys:
             expiry_date = key['expiration_date']
@@ -7470,17 +7521,20 @@ method_types = {
     "sber_loan": "Кредит от Сбербанка"
 }
 
-async def auto_payments_agreement(bot: Bot, user_id: int, payment_methods: List[Dict]):
+async def auto_payments_agreement(bot: Bot, user_id: int, payment_methods: List[Dict], next_expiration: str):
     """
     Присылает пользователю сообщение о том, что есть возможность подключить способ оплаты.
     """
     state = get_user_state(bot=bot, dispatcher=DP, user_id=user_id)
     await state.update_data(payment_methods=payment_methods)
+    
+    payment_methods_count = len(payment_methods)
+    change_word_1 = "способ" if payment_methods_count == 1 else "способ(-ов)"
 
     text = (
         f"<b>🚀 Подписка активна!</b>\n\n"
-        f"✅ У вас уже сохранён <b>{len(payment_methods)}</b> способ оплаты — плата за VPN будет "
-        f"списываться автоматически по вашему тарифу. Следующее списание - <b>{}</b>.\n\n"
+        f"✅ У вас уже сохранён <b>{payment_methods_count}</b> {change_word_1} оплаты — плата за VPN будет "
+        f"списываться автоматически по вашему тарифу. Следующее списание - <b>{next_expiration}</b>.\n\n"
         f"Не хотите автоплатёж? Можно отказаться от автоплатежей ниже. "
         f"Если в течение 3 дней не откликнетесь, "
         f"мы примем это как согласие на продолжение обслуживания.\n\n"
@@ -7548,15 +7602,12 @@ async def ask_for_key_period(key: Dict, user_id: int | str, bot: Bot):
     state = get_user_state(bot=bot, dispatcher=DP, user_id=user_id)
     await state.update_data(key=key)
 
-    text = (
-        f"У вас закончился срок действия подписки!\n\n"
-        f"Имя: <b>{key['name']}</b>\n"
-        f"Устройство: <b>{key['device_id']}</b>\n\n"
-        f"Пожалуйста, уточните, на сколько его продлевать."
-    )
+    device_name = DEVICES[key['device_id']]
 
     text = (
-        
+        f"⏰ Ваша подписка истекла!\n\n"
+        f"<blockquote>Устройство: <b>{device_name}</b></blockquote>\n\n"
+        f"Выберите срок продления 👇"
     )
 
     kb = InlineKeyboardBuilder()
@@ -7565,6 +7616,7 @@ async def ask_for_key_period(key: Dict, user_id: int | str, bot: Bot):
     kb.add(InlineKeyboardButton(text="💳 6 месяцев - 449₽", callback_data=f"after_question_continue_sub_180_449"))
     kb.add(InlineKeyboardButton(text="💳 12 месяцев - 849₽", callback_data=f"after_question_continue_sub_360_849"))
     kb.add(InlineKeyboardButton(text="❌ Удалить ключ", callback_data="cancel_after_question"))
+    kb.add(InlineKeyboardButton(text="👨‍💻 Поддержка", url=SUPPORT_URI))
     kb.adjust(1, 1, 1, 1, 1, 1)
 
     await bot.send_message(
@@ -7649,5 +7701,150 @@ async def cancel_sub(callback: types.CallbackQuery, state: FSMContext, bot: Bot)
         reply_markup=kb.as_markup()
     )
 
+
+async def send_success_payment_notification(user_id, amount, new_end_date, days, payment_method: str, bot: Bot):
+    """
+    Отправляет уведомление пользователю об успешном автоматическом продлении
+    """
+    try:
+        # Форматируем дату для отображения
+        formatted_date = datetime.fromisoformat(new_end_date).strftime("%d.%m.%Y")
+
+        payment_method = PAYMENT_TYPES[payment_method]
+        
+        message = (
+            f"✅ Подписка успешно продлена на <b>{days} дней</b>!\n\n"
+            f"<blockquote>"
+            f"└ 💰 Сумма списания: <b>{amount}</b>\n"
+            f"└ 📅 Новая дата окончания: <b>{formatted_date}</b>\n"
+            f"└ 💳 Способ оплаты: <b>{payment_method.lower()}</b>"
+            f"</blockquote>\n\n"
+            f"Спасибо, что пользуетесь нашим сервисом!"
+        )
+        
+        await bot.send_message(user_id, message)
+        logger.info(f"Отправлено уведомление об успешном продлении пользователю {user_id}")
+    
+    except Exception as e:
+        logger.error(f"Ошибка при отправке уведомления пользователю {user_id}: {str(e)}")
+
+async def send_failed_payment_notification(user_id, amount, subscription_end, bot: Bot, key: Dict, attempts=1):
+    """
+    Отправляет уведомление пользователю о неудачном автоматическом продлении
+    
+    Args:
+        user_id (int): ID пользователя
+        amount (int): Сумма платежа
+        subscription_end (str): Дата окончания подписки
+        attempts (int): Количество попыток списания
+    """
+    try:
+        # Форматируем дату для отображения
+        formatted_date = subscription_end
+        
+        message = (
+            f"❌ Не удалось продлить подписку\n\n"
+            f"Мы попытались списать оплату с {attempts} способов оплаты, но все операции были отклонены.\n\n"
+            "<blockquote>"
+            f"💰 Сумма платежа: <b>{amount}</b>\n"
+            f"📅 Дата окончания подписки: <b>{formatted_date}</b>"
+            "</blockquote>\n\n"
+            f"Пожалуйста, продлите подписку вручную через бота или обновите данные карты.\n\n"
+        )
+
+        state = get_user_state(bot=bot, dispatcher=DP, user_id=user_id)
+        await state.update_data(key_to_pay=key, key_to_connect=key)
+
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🔄 Повторить оплату", callback_data="payment_again")
+        kb.button(text="💳 Оплатить другим способом", callback_data="extend_subscription")
+        kb.button(text="👨‍💻 Поддержка", url=SUPPORT_URI)
+        kb.adjust(1, 1)
+
+        await bot.send_message(user_id, message)
+        logger.info(f"Отправлено уведомление о неудачном продлении пользователю {user_id}")
+    
+    except Exception as e:
+        logger.error(f"Ошибка при отправке уведомления пользователю {user_id}: {str(e)}")
+
+@router.callback_query(F.data.startswith("payment_again"))
+async def payment_again(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
+    """
+    Попытка ещё раз оплатить тот же ключ
+    """
+    await callback.answer()
+
+    data = await state.get_data()
+    key = data["key_to_pay"]
+
+    from handlers.scheduler import process_key_payment
+    await process_key_payment(key=key, bot=bot)
+
+async def send_manual_renewal_notification(user_id, subscription_end, bot: Bot, key: Dict, when: str = "сегодня"):
+    """
+    Отправляет уведомление пользователю о необходимости ручного продления
+    """
+    state = get_user_state(bot, DP, user_id)
+    await state.update_data(key_to_connect=key["key"])
+
+    try:
+        # Форматируем дату для отображения
+        formatted_date = subscription_end
+
+        message = (
+            f"⚠️ Срок действия подписки истекает <b>{when}</b>\n\n"
+            f"Ваша подписка VPN истекает <b>{when} ({formatted_date})</b>.\n\n"
+            f"У вас не настроено автоматическое продление. Чтобы продолжить пользоваться "
+            f"сервисом без перерывов, продлите подписку через бота."
+        )
+
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🔄 Продлить подписку", callback_data="extend_subscription")
+        kb.button(text="👨‍💻 Поддержка", url=SUPPORT_URI)
+        kb.adjust(1, 1)
+        
+        await bot.send_message(user_id, message, reply_markup=kb.as_markup())
+        logger.info(f"Отправлено уведомление о необходимости ручного продления пользователю {user_id}")
+    
+    except Exception as e:
+        logger.error(f"Ошибка при отправке уведомления пользователю {user_id}: {str(e)}")
+
+
+async def send_vpn_reminder(user_id: int | str, bot: Bot):
+    """
+    Присылает пользователю напоминание о существовании VPN
+    """
+    text = (
+        f"🚀 Подключите VPN-подписку\n\n"
+        "<blockquote>"
+        f"Вы уже пользовались нашим сервисом, а теперь мы предлагаем полностью "
+        "автоматическую подписку: оплатили — и больше не думаете о продлении."
+        "</blockquote>\n\n"
+        f"<b>💳 Всего 99 ₽ за 30 дней.</b>\n\n"
+        f"Нажмите кнопку ниже и оставайтесь онлайн без ограничений!"
+    )
+
+    kb = InlineKeyboardBuilder()
+    kb.add(InlineKeyboardButton(text="💳 Купить 99 ₽/мес", callback_data="connection"))
+    kb.add(InlineKeyboardButton(text="👨‍💻 Поддержка", url=SUPPORT_URI))
+    kb.adjust(1, 1)
+
+    await bot.send_message(
+        chat_id=user_id,
+        text=text,
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML"
+    )
+
+    logger.info(f"Отправили напоминание о сервисе для пользователя {user_id}")
+    
+    username = await get_user_info(user_id=user_id)
+    admins = await get_admins()
+    await send_info_for_admins(
+        "Отправили пользователю напоминание о нашем существовании",
+        admins,
+        bot,
+        username
+    )
 
 # ------------------------------------------------

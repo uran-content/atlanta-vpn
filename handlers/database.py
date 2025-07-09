@@ -15,7 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from py3xui import AsyncApi
 
-from handlers.utils import extract_key_data
+from handlers.utils import extract_key_data, unix_to_str
 from config import NEW_LOGIN, NEW_PASSWORD
 
 logger = logging.getLogger(__name__)
@@ -299,7 +299,6 @@ async def add_name_column_to_keys():
         return False
 
 
-
 async def add_payment_id_column():
     """
     Добавляет колонку payment_id в таблицу keys, если она еще не существует.
@@ -357,7 +356,7 @@ async def add_payment_method(user_id: int, payment_method_id: str, issuer_name: 
         logger.error(f"Ошибка при добавлении метода оплаты: {e}")
         return None
 
-async def get_user_payment_methods(user_id: int):
+async def get_user_payment_methods(user_id: int, include_balance: bool = False):
     """
     Получает все методы оплаты пользователя
     
@@ -377,7 +376,19 @@ async def get_user_payment_methods(user_id: int):
                 ORDER BY created_at DESC
             """, (user_id,))
             methods = await cursor.fetchall()
-            return [dict(row) for row in methods]
+            methods = [dict(row) for row in methods]
+
+            if include_balance:
+                cursor = await db.execute("""
+                    SELECT balance
+                    FROM users
+                    WHERE user_id = ?
+                """, (user_id,))
+                row = await cursor.fetchone()
+                balance = int(row['balance']) if row else 0
+                return methods, balance
+
+            return methods
     except Exception as e:
         logger.error(f"Ошибка при получении методов оплаты пользователя: {e}")
         return []
@@ -1504,23 +1515,58 @@ async def check_unused_free_keys():
 
 async def check_expiring_subscriptions():
     """
-    Проверяет подписки, которые истекают через день
-    
-    Returns:
-        list: Список кортежей (user_id, expiration_date, key) пользователей с истекающими подписками
+    Возвращает все ключи, чей expiration_date (мс Unix‑эпохи) попадает на завтрашнюю дату UTC.
     """
     try:
+        # Вычисляем начало и конец завтрашнего дня в UTC
+        now_utc = datetime.now(timezone.utc)
+        today_utc = now_utc.date()
+        tomorrow_utc = today_utc + timedelta(days=1)
+        start_of_tomorrow = datetime.combine(tomorrow_utc, datetime.min.time(), tzinfo=timezone.utc)
+        end_of_tomorrow = start_of_tomorrow + timedelta(days=1)
+        start_ms = int(start_of_tomorrow.timestamp() * 1000)
+        end_ms = int(end_of_tomorrow.timestamp() * 1000)
+
         async with aiosqlite.connect(DB_PATH) as db:
-            tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
-            cursor = await db.execute("""
-                SELECT user_id, expiration_date, key
-                FROM keys 
-                WHERE DATE(expiration_date) = DATE(?) 
-                AND user_id IS NOT NULL
-            """, (tomorrow,))
-            return await cursor.fetchall()
+            db.row_factory = aiosqlite.Row
+            query = """
+                SELECT *
+                FROM   keys
+                WHERE  expiration_date >= ? AND expiration_date < ?;
+            """
+            cursor = await db.execute(query, (start_ms, end_ms))
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
     except Exception as e:
-        logger.error(f"Ошибка при проверке истекающих подписок: {e}")
+        logger.error(f"Ошибка при получении ключей: {e}")
+        return []
+
+async def check_expiring_in_3_days_subscriptions():
+    """
+    Возвращает все ключи, чей expiration_date (мс Unix‑эпохи) попадает на дату через три дня UTC.
+    """
+    try:
+        # Вычисляем начало и конец завтрашнего дня в UTC
+        now_utc = datetime.now(timezone.utc)
+        today_utc = now_utc.date()
+        tomorrow_utc = today_utc + timedelta(days=3)
+        start_of_tomorrow = datetime.combine(tomorrow_utc, datetime.min.time(), tzinfo=timezone.utc)
+        end_of_tomorrow = start_of_tomorrow + timedelta(days=1)
+        start_ms = int(start_of_tomorrow.timestamp() * 1000)
+        end_ms = int(end_of_tomorrow.timestamp() * 1000)
+
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            query = """
+                SELECT *
+                FROM   keys
+                WHERE  expiration_date >= ? AND expiration_date < ?;
+            """
+            cursor = await db.execute(query, (start_ms, end_ms))
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Ошибка при получении ключей: {e}")
         return []
 
 
@@ -1690,7 +1736,10 @@ async def remove_key(key: str, user_id: str):
     from handlers.scheduler import active_jobs
 
     job_id = f'remove_{key}'
-    active_jobs.remove(job_id)
+    try:
+        active_jobs.remove(job_id)
+    except ValueError:
+        logger.warning(f"По какой-то причине нет этого элемента в списке: {job_id}")
 
     try:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -2437,6 +2486,27 @@ async def add_active_key(user_id, key, device_id, expiration_date, name, price: 
     except Exception as e:
         logger.error(f"Error adding key to database: {e}", exc_info=True)
         raise
+
+async def get_next_expiration_date(user_id: int | str, include_time: bool = False) -> str:
+    """
+    Получает следующую дату экспирации для пользователя.
+    """
+    query = """
+        SELECT MIN(expiration_date)
+        FROM keys
+        WHERE user_id = ? AND expiration_date > ?
+        """
+    current_time = int(datetime.now().timestamp() * 1000)
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(query, (user_id, current_time)) as cursor:
+            row = await cursor.fetchone()
+            if row and row[0] is not None:
+                exp_date = unix_to_str(row[0], include_time=include_time)
+                return exp_date
+            else:
+                return None
+
 
 async def update_key_days_price(key_str: str, days: int | str, price: int | str):
     """

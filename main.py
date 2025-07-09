@@ -20,15 +20,18 @@ from aiogram.types import BotCommand, BotCommandScopeDefault
 from config import API_TOKEN
 from handlers.database import (
     init_db,
+    get_next_expiration_date,
     setup_scheduler,
     delete_all_payment_methods,
     get_users_without_payment_methods,
     get_user_transactions,
+    get_user_keys
 )
 from handlers.handlers import (
     router,
     setup_notification_scheduler,
     auto_payments_agreement,
+    send_vpn_reminder,
     setup_dp_instance
 )
 from handlers.database import set_bot_instance
@@ -166,13 +169,13 @@ async def bot_lifecycle(bot: Bot, dp: Dispatcher):
     payScheduler.start()
 
     scheduler = setup_scheduler()
-    notification_scheduler = setup_notification_scheduler(bot)
+    # notification_scheduler = setup_notification_scheduler(bot)
     
     try:
         yield
     finally:
         logger.info("Graceful shutdown...")
-        await notification_scheduler.shutdown()
+        # await notification_scheduler.shutdown()
         scheduler.shutdown()
         await bot.session.close()
 
@@ -229,11 +232,11 @@ async def payment_method_migration(bot: Bot):
     3. Рассылает каждому такому пользователю сообщение с согласием на автооплаты
     4. В сообщении кнопка - автоматически мигрирует его платежные данные
     """
-    await delete_all_payment_methods()
+    await delete_all_payment_methods() # чистим методы оплаты
 
     users = await get_users_without_payment_methods()
 
-    for user in users:
+    for user in users: # 1 - кто зареган, но без методов оплаты
         user_id = user["user_id"]
         transactions = await get_user_transactions(user_id)
 
@@ -245,12 +248,18 @@ async def payment_method_migration(bot: Bot):
                 payment_methods.add(payment_info.payment_method)
         payment_methods = list(payment_methods)
 
-        if payment_methods:
-            await auto_payments_agreement(
-                bot=bot,
-                user_id=user_id,
-                payment_methods=payment_methods
-            )
+        if payment_methods: # для тех, у кого есть сохраненные методы оплаты
+            keys = await get_user_keys(user_id)
+            if keys:
+                next_expiration = await get_next_expiration_date(user_id)
+                await auto_payments_agreement(
+                    bot=bot,
+                    user_id=user_id,
+                    payment_methods=payment_methods,
+                    next_expiration=next_expiration
+                )
+            else:
+                await send_vpn_reminder(user_id, bot)
 
 async def start_bot(bot: Bot, dp: Dispatcher) -> None:
     """

@@ -7,6 +7,8 @@ from aiogram import Bot
 import asyncio
 import aiofiles
 
+from datetime import datetime
+
 from config import LOG_CHANNELS
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,19 @@ async def once_per_string(s: str):
             async with aiofiles.open('seen_strings.txt', 'a', encoding='utf-8') as f:
                 await f.write(s + '\n')
             yield
+
+def unix_to_str(unix: str, include_time: bool = True) -> str:
+    """
+    Возвращает строку в формате %d.%m.%Y %H:%M или %d.%m.%Y
+    """
+    timestamp_s = int(unix) / 1000  # делим на 1000 — получаем секунды
+    dt = datetime.fromtimestamp(timestamp_s)
+    if include_time:
+        subscription_end = dt.strftime("%d.%m.%Y %H:%M")
+    else:
+        subscription_end = dt.strftime("%d.%m.%Y")
+    
+    return subscription_end
 
 def extract_key_data(key: str):
     """

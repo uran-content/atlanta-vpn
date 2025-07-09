@@ -6,6 +6,29 @@ from config import SHOP_ID, SECRET_KEY, DEFAULT_EMAIL
 Configuration.account_id = SHOP_ID
 Configuration.secret_key = SECRET_KEY
 
+
+PAYMENT_TYPES = {
+    "electronic_certificate": "Электронный сертификат",
+    "sber_loan": "Кредит в сбербанке",
+    "alfabank": "Альфа-клик",
+    "apple_pay": "Apple Pay",
+    "bank_card": "Банковская карта",
+    "cash": "Кэш",
+    "mobile_balance": "Телефон",
+    "sbp": "СБП",
+    "google_pay": "Google Pay",
+    "installments": "Частями",
+    "qiwi": "QIWI",
+    "b2b_sberbank": "Sberbank Business Online",
+    "sberbank": "SberPay",
+    "tinkoff_bank": "T-Pay",
+    "wechat": "WeChat",
+    "webmoney": "WebMoney",
+    "yoo_money": "YooMoney",
+    "Внутренний баланс": "Внутренний баланс"
+}
+
+
 async def create_payment(amount, description, email: str = DEFAULT_EMAIL):
     payment = Payment.create(
         {
@@ -75,7 +98,7 @@ async def get_payment_info(transaction_id: str):
     payment_info = Payment.find_one(transaction_id)
     return payment_info
 
-async def check_payment_status(payment_id: str, amount: int) -> bool:
+async def check_payment_status(payment_id: str, amount: int, second_arg: str = "id") -> bool:
     """
     Check payment status in YooKassa
 
@@ -89,10 +112,19 @@ async def check_payment_status(payment_id: str, amount: int) -> bool:
     try:
         payment = Payment.find_one(payment_id)
 
+        print("CHECK PAYMENT STATUS")
         if payment and payment.status == "succeeded":
-            if payment.amount.value == amount:
+            print("SUCCEEDED")
+            print(f"payment.amount.value = {payment.amount.value}")
+            if (payment.amount.value == int(amount)) or (payment.amount.value == float(amount)):
+                print("AMOUNT EQUALS")
                 if payment.payment_method.saved:
-                    return True, payment.payment_method.id, payment
+                    print("SAVED")
+                    if second_arg == "id":
+                        return True, payment.payment_method.id, payment
+                    elif second_arg == "type":
+                        print("TYPE")
+                        return True, payment.payment_method.type, payment
                 return True, None, None
         return False, None, None
 
