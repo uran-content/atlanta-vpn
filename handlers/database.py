@@ -215,6 +215,7 @@ async def init_db():
                 payment_method_id TEXT NOT NULL,
                 issuer_name TEXT NOT NULL,
                 title TEXT NOT NULL,
+                when_valid TEXT NOT NULL,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -247,6 +248,7 @@ async def init_db():
         
         await _ensure_column_exists(db, "keys", "price", "INTEGER")
         await _ensure_column_exists(db, "keys", "days", "INTEGER")
+        await _ensure_column_exists(db, "user_payment_methods", "when_valid", "TEXT")
 
     print("Инициализация базы данных завершена.")
     # await cleanup_expired_keys()
@@ -332,7 +334,7 @@ async def add_payment_id_column():
         logger.error(f"Ошибка при добавлении колонки payment_id: {e}")
         return False
 
-async def add_payment_method(user_id: int, payment_method_id: str, issuer_name: str, title: str):
+async def add_payment_method(user_id: int, payment_method_id: str, issuer_name: str, title: str, days_delay: int):
     """
     Добавляет новый метод оплаты для пользователя
     
@@ -344,16 +346,35 @@ async def add_payment_method(user_id: int, payment_method_id: str, issuer_name: 
     Returns:
         int: ID добавленного метода оплаты или None в случае ошибки
     """
+    date = datetime.now(tz=timezone.utc) + timedelta(days=days_delay)
+    timestamp_ms = int(date.timestamp() * 1000)
+
     try:
         async with aiosqlite.connect(DB_PATH) as db:
+            # Проверяем, существует ли запись
             cursor = await db.execute("""
-                INSERT INTO user_payment_methods (user_id, payment_method_id, issuer_name, title)
-                VALUES (?, ?, ?, ?)
-            """, (user_id, payment_method_id, issuer_name, title))
+                SELECT id FROM user_payment_methods WHERE user_id = ? AND payment_method_id = ?
+            """, (user_id, payment_method_id))
+            row = await cursor.fetchone()
+            if row:
+                # Запись существует, обновляем её
+                method_id = row[0]
+                await db.execute("""
+                    UPDATE user_payment_methods
+                    SET issuer_name = ?, title = ?, when_valid = ?
+                    WHERE id = ?
+                """, (issuer_name, title, timestamp_ms, method_id))
+            else:
+                # Записи нет, вставляем новую
+                cursor = await db.execute("""
+                    INSERT INTO user_payment_methods (user_id, payment_method_id, issuer_name, title, when_valid)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (user_id, payment_method_id, issuer_name, title, timestamp_ms))
+                method_id = cursor.lastrowid
             await db.commit()
-            return cursor.lastrowid
+            return method_id
     except Exception as e:
-        logger.error(f"Ошибка при добавлении метода оплаты: {e}")
+        logger.error(f"Ошибка при добавлении/обновлении метода оплаты: {e}")
         return None
 
 async def get_user_payment_methods(user_id: int, include_balance: bool = False):
@@ -367,14 +388,16 @@ async def get_user_payment_methods(user_id: int, include_balance: bool = False):
         list: Список словарей с информацией о методах оплаты
     """
     try:
+        current_timestamp_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("""
                 SELECT id, user_id, payment_method_id, issuer_name, title, created_at
                 FROM user_payment_methods
-                WHERE user_id = ?
+                WHERE user_id = ? AND when_valid <= ?
                 ORDER BY created_at DESC
-            """, (user_id,))
+            """, (user_id, current_timestamp_ms))
             methods = await cursor.fetchall()
             methods = [dict(row) for row in methods]
 
@@ -433,6 +456,28 @@ async def delete_payment_method(method_id: int):
                 DELETE FROM user_payment_methods
                 WHERE id = ?
             """, (method_id,))
+            await db.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Ошибка при удалении метода оплаты: {e}")
+        return False
+    
+async def delete_payment_method_by_id(user_id: str | int, payment_method_id: str):
+    """
+    Удаляет метод оплаты по его ID
+    
+    Args:
+        method_id (int): ID метода оплаты
+        
+    Returns:
+        bool: True если метод успешно удален, False в противном случае
+    """
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("""
+                DELETE FROM user_payment_methods
+                WHERE user_id = ? AND payment_method_id = ?
+            """, (user_id, payment_method_id))
             await db.commit()
             return True
     except Exception as e:
@@ -811,12 +856,13 @@ async def get_user_transactions(user_id: int):
         transactions = await cursor.fetchall()
         return [dict(row) for row in transactions]
 
-async def add_multiple_payment_methods(user_id: int, payment_methods: List[Dict]):
+async def add_multiple_payment_methods(user_id: int, payment_methods: List[Dict], days_delay: int = 0):
     for method in payment_methods:
         await add_payment_method(user_id=user_id,
                                  payment_method_id=method["id"],
                                  issuer_name=method["type"],
-                                 title=method["type"])
+                                 title=method["type"],
+                                 days_delay=days_delay)
 
 async def get_transaction_by_id(transaction_id: str) -> dict | None:
     """

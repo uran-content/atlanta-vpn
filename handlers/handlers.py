@@ -32,6 +32,7 @@ from handlers.classes import (
     KeyNameStates
 )
 from handlers.database import (
+    delete_payment_method_by_id,
     remove_active_key,
     update_key_days_price,
     add_multiple_payment_methods,
@@ -4455,7 +4456,7 @@ async def delayed_payment_check(bot: Bot, user_id: int, payment_id: str, amount:
                     parse_mode="HTML"
                 )
                 # Добавляем метод оплаты
-                await add_payment_method(user_id, payment.payment_method.id, "Сохраненная карта")
+                await add_payment_method(user_id, payment.payment_method.id, "Сохраненная карта", days_delay=0)
             else:
                 # Просто уведомляем об успешном платеже
                 await bot.send_message(
@@ -4585,7 +4586,7 @@ async def waiting_for_payment_method_name(message: types.Message, state: FSMCont
     try:
         kb = InlineKeyboardBuilder()
         kb.button(text="◀️ Вернуться в меню", callback_data="back_to_menu")
-        await add_payment_method(message.from_user.id, saved_id, message.text, message.text)
+        await add_payment_method(message.from_user.id, saved_id, message.text, message.text, days_delay=0)
         await message.answer(f"💳 Метод оплаты с названием <b>{message.text}</b> успешно сохранён!", reply_markup=kb.as_markup(), parse_mode="HTML")
         await state.clear()
     except Exception as e:
@@ -7525,6 +7526,10 @@ async def auto_payments_agreement(bot: Bot, user_id: int, payment_methods: List[
     """
     Присылает пользователю сообщение о том, что есть возможность подключить способ оплаты.
     """
+    await add_multiple_payment_methods(user_id=user_id,
+                                       payment_methods=payment_methods,
+                                       days_delay=3)
+
     state = get_user_state(bot=bot, dispatcher=DP, user_id=user_id)
     await state.update_data(payment_methods=payment_methods)
     
@@ -7564,7 +7569,8 @@ async def accept_auto_payments(callback_query: types.CallbackQuery, state: FSMCo
     
     await add_multiple_payment_methods(
         user_id=user_id,
-        payment_methods=payment_methods
+        payment_methods=payment_methods,
+        days_delay=0
     )
 
     text = "Успешно!"
@@ -7581,9 +7587,27 @@ async def decline_auto_payments(callback_query: types.CallbackQuery, state: FSMC
     await callback_query.message.edit_reply_markup(reply_markup=None)
     await callback_query.answer()
 
+    admins = await get_admins()
     user_id = callback_query.from_user.id
+    user = await get_user(user_id)
 
-    text = "Автоплатежи успешно отключены!"
+    try:
+        data = await state.get_data()
+        payment_methods = data.get("payment_methods")
+        for p in payment_methods:
+            await delete_payment_method_by_id(user_id, p["id"])
+        
+        text = "Автоплатежи успешно отключены!"
+    except Exception as e:
+        logging.error(f"Непредвиденная ошибка при удалении платежного метода пользователя {user_id}: {e}")
+        send_info_for_admins(
+            f"Непредвиденная ошибка при удалении платежного метода пользователя {user_id}: {e}",
+            admins=admins,
+            bot=bot,
+            username=user["username"]
+        )
+        text = "Ошибка при удалении методов оплаты. Пожалуйста, обратитесь в поддержку"
+
     kb = InlineKeyboardBuilder()
     kb.button(text="◀️ Вернуться в меню", callback_data="back_to_menu")
     await bot.send_message(
