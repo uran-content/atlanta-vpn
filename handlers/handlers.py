@@ -483,7 +483,7 @@ async def troubleshoot_vpn(callback: types.CallbackQuery, bot: Bot, state: FSMCo
         return
     
     kb = InlineKeyboardBuilder()
-    kb.button(text="🔄 Заменить ключ", callback_data="replace_key")
+    # kb.button(text="🔄 Заменить ключ", callback_data="replace_key")
     kb.button(text="🌍 Сменить страну", callback_data="change_key_country")
     kb.button(text="🆘 Поддержка", url=SUPPORT_URI)
     kb.button(text="◀️ Назад", callback_data="back_to_menu")
@@ -1526,7 +1526,7 @@ async def payment_method_details(callback: types.CallbackQuery):
     
     kb = InlineKeyboardBuilder()
     kb.button(text="❌ Удалить метод оплаты", callback_data=f"cancel_payment_method_{method_id}")
-    kb.button(text="🔑 Сделать основным", callback_data=f"sync_payment_method_{method_id}")
+    # kb.button(text="🔑 Сделать основным", callback_data=f"sync_payment_method_{method_id}")
     kb.button(text="◀️ Назад к подпискам", callback_data="my_subscriptions")
     kb.adjust(1)
     
@@ -1979,7 +1979,7 @@ async def active_keys(callback: types.CallbackQuery, bot: Bot):
 async def key_settings(callback: types.CallbackQuery):
     kb = InlineKeyboardBuilder()
     kb.button(text="🔄 Продлить подписку", callback_data="extend_subscription")
-    kb.button(text="🔄 Заменить ключ", callback_data="replace_key")
+    # kb.button(text="🔄 Заменить ключ", callback_data="replace_key")
     kb.button(text="🌍 Изменить страну", callback_data="change_key_country")
     kb.button(text="📡 Изменить протокол", callback_data="change_key_protocol")
     kb.button(text="📝 Изменить название ключа", callback_data="change_key_name")
@@ -1992,8 +1992,8 @@ async def key_settings(callback: types.CallbackQuery):
             "Выберите действие:\n\n"
             "🔄 <b>Продлить подписку</b>\n"
             "└ Продлить срок действия текущего ключа\n\n"
-            "🔄 <b>Заменить ключ</b>\n"
-            "└ Получить новый ключ взамен текущего\n\n"
+            # "🔄 <b>Заменить ключ</b>\n"
+            # "└ Получить новый ключ взамен текущего\n\n"
             "🌍 <b>Изменить страну</b>\n"
             "└ Выбрать другой сервер подключения\n\n"
             "📡 <b>Изменить протокол</b>\n"
