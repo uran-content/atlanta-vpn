@@ -242,13 +242,13 @@ async def payment_method_migration(bot: Bot):
         user_id = user["user_id"]
         transactions = await get_user_transactions(user_id)
 
-        payment_methods = set()
+        payment_methods = []
         for t in transactions:
             payment_info = await get_payment_info(t["transaction_id"])
 
             if payment_info.payment_method.saved:
-                payment_methods.add(payment_info.payment_method)
-        payment_methods = list(payment_methods)
+                payment_methods.append({"id": payment_info.payment_method.id, "type":payment_info.payment_method.type})
+        print(str(payment_methods))
 
         if payment_methods: # для тех, у кого есть сохраненные методы оплаты
             keys = await get_user_keys(user_id)
