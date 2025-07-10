@@ -1830,6 +1830,10 @@ async def check_user_transaction(callback: types.CallbackQuery, state: FSMContex
                     if payment.payment_method.saved:
                         if not first_deposit:
                             await sync_payment_id_for_all_keys(user['user_id'], payment.payment_method.id)
+                        
+                        kb = InlineKeyboardBuilder()
+                        kb.add(InlineKeyboardButton(text="◀️ Вернуться в меню", callback_data="back_to_menu"))
+                        kb.adjust(1)
 
                         await bot.send_message(callback.from_user.id, "💳 <b>Платеж успешно завершен</b>\n\n"
                                                f"💳 <b>Сумма:</b> {amount}₽\n\n"
@@ -1884,7 +1888,7 @@ async def check_user_transaction(callback: types.CallbackQuery, state: FSMContex
             "Пожалуйста, обратитесь в поддержку."
         )
         kb = InlineKeyboardBuilder()
-        kb.button(text="💭 Поддержка", callback_data="support")
+        kb.button(text="💭 Поддержка", url=SUPPORT_URI)
         kb.button(text="◀️ Назад", callback_data="transactions")
         kb.adjust(1)
         await callback.message.edit_caption(
@@ -3298,6 +3302,9 @@ async def request_amount(callback: types.CallbackQuery, state: FSMContext, bot: 
     # Проверяем наличие email у пользователя
     user_email = await get_user_email(callback.from_user.id)
     
+    data = await state.get_data()
+    print(f"request_amount -- {data}")
+    
     if not user_email:
         kb = InlineKeyboardBuilder()
         kb.button(text="✏️ Добавить email", callback_data="change_email")
@@ -3372,11 +3379,14 @@ async def process_amount(message: Message, state: FSMContext, bot: Bot):
             await message.answer("❌ Произошла ошибка при создании платежа. Попробуйте позже или обратитесь в поддержку.")
             return
         
+        data = await state.get_data()
+        print(f"process_amount -- {data}")
+
         kb = InlineKeyboardBuilder()
         kb.button(text="💳 Оплатить", url=url)
         kb.button(text="🔄 Проверить оплату", callback_data="check_payment")
         kb.button(text="📊 История транзакций", callback_data="transactions")
-        kb.button(text="💭 Поддержка", callback_data="support")
+        kb.button(text="💭 Поддержка", url=SUPPORT_URI)
         kb.button(text="◀️ Отмена", callback_data="profile")
         kb.adjust(1, 1, 1, 2)
         
@@ -3412,7 +3422,7 @@ async def process_amount(message: Message, state: FSMContext, bot: Bot):
             delayed_payment_check, 
             'date', 
             run_date=datetime.now() + timedelta(minutes=3),
-            args=[bot, message.from_user.id, label, amount, "add_balance"]
+            args=[bot, message.from_user.id, label, amount, "add_balance", state],
         )
         scheduler.start()
         
@@ -4379,6 +4389,9 @@ async def process_email(message: Message, state: FSMContext, bot: Bot, existing_
 
     devices = DEVICES
 
+    data = await state.get_data()
+    print(f"process_email -- {data}")
+
     if balance < int(price):
         success_payment = await client_pay(current_user_id=current_user_id, price=price, bot=bot, user=user)
 
@@ -4419,7 +4432,19 @@ async def process_email(message: Message, state: FSMContext, bot: Bot, existing_
         )
         await update_balance(current_user_id, int(user['balance']) - int(price))
 
-async def delayed_payment_check(bot: Bot, user_id: int, payment_id: str, amount: int, action: str):
+@router.callback_query(F.data == "process_email")
+async def process_email_handler(callback_query: types.CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = callback_query.from_user.id
+
+    data = await state.get_data()
+    print(f"process_email_handler -- {data}")
+
+    email = await get_user_email(user_id=user_id)
+    await callback_query.answer()
+
+    await process_email(message=callback_query.message, state=state, bot=bot, existing_email=email, user_id=user_id)
+
+async def delayed_payment_check(bot: Bot, user_id: int, payment_id: str, amount: int, action: str, state: FSMContext):
     """
     Функция для отложенной проверки платежа через 3 минуты
     """
@@ -4435,7 +4460,7 @@ async def delayed_payment_check(bot: Bot, user_id: int, payment_id: str, amount:
         
         kb = InlineKeyboardBuilder()
         kb.button(text="🔄 Проверить вручную", callback_data="check_payment")
-        kb.button(text="💭 Поддержка", callback_data="support")
+        kb.button(text="💭 Поддержка", url=SUPPORT_URI)
         kb.adjust(1)
         
         if payment_success:
@@ -4444,6 +4469,13 @@ async def delayed_payment_check(bot: Bot, user_id: int, payment_id: str, amount:
             await update_transaction_status(transaction_id=payment_id, new_status="succeeded")
             await update_balance(user_id, new_balance)
             
+
+
+            kb = InlineKeyboardBuilder()
+            kb.add(InlineKeyboardButton(text="🌐 Продолжить покупку", callback_data="process_email"))
+            kb.add(InlineKeyboardButton(text="◀️ Вернуться в меню", callback_data="back_to_menu"))
+            kb.adjust(1, 1)
+
             # Если платежный метод сохранён
             if saved_payment_method_id:
                 # Уведомляем о сохранении метода оплаты
@@ -4453,17 +4485,28 @@ async def delayed_payment_check(bot: Bot, user_id: int, payment_id: str, amount:
                     f"💳 <b>Сумма:</b> {amount}₽\n"
                     "💳 <b>Метод оплаты сохранён</b>\n"
                     "💡 Вы можете присвоить ему название в разделе Методы оплаты",
+                    reply_markup=kb.as_markup(),
                     parse_mode="HTML"
                 )
                 # Добавляем метод оплаты
-                await add_payment_method(user_id, payment.payment_method.id, "Сохраненная карта", days_delay=0)
+                await add_payment_method(user_id,
+                                         payment.payment_method.id,
+                                         payment.payment_method.type,
+                                         payment.payment_method.type,
+                                         days_delay=0)
             else:
                 # Просто уведомляем об успешном платеже
+                kb = InlineKeyboardBuilder()
+                kb.add(InlineKeyboardButton(text="🌐 Продолжить покупку", callback_data="process_email"))
+                kb.add(InlineKeyboardButton(text="◀️ Вернуться в меню", callback_data="back_to_menu"))
+                kb.adjust(1, 1)
+
                 await bot.send_message(
                     user_id,
                     "✅ <b>Платеж успешно завершен</b>\n\n"
                     f"💳 <b>Сумма:</b> {amount}₽\n"
                     f"💰 <b>Новый баланс:</b> {new_balance}₽",
+                    reply_markup=kb.as_markup(),
                     parse_mode="HTML"
                 )
             
@@ -4518,18 +4561,29 @@ async def check_payment(callback_query: types.CallbackQuery, state: FSMContext, 
             new_balance = int(user['balance']) + amount
 
             try:
-                kb = InlineKeyboardBuilder()
                 await update_transaction_status(transaction_id=payment_id, new_status="succeeded")
                 await update_balance(callback_query.from_user.id, new_balance)
-                if saved_payment_method_id:                    
+                if saved_payment_method_id:
+                    
+                    data = await state.get_data()
+                    print(f"check_payment -- {data}")
+
+                    kb = InlineKeyboardBuilder()
+                    kb.add(InlineKeyboardButton(text="🌐 Продолжить покупку", callback_data="process_email"))
+                    kb.add(InlineKeyboardButton(text="◀️ Вернуться в меню", callback_data="back_to_menu"))
+                    kb.adjust(1, 1)
+                    
                     await bot.send_message(user['user_id'], "✅ <b>Платеж успешно завершен</b>\n\n"
                                             f"💳<b>Сумма:</b> {amount}₽\n"
-                                            "💳<b>Метод оплаты будет сохранён в вашем профиле</b>\n\nОтправьте желаемое название для этого метода оплаты",
+                                            "💳<b>Метод оплаты будет сохранён в вашем профиле</b>",
                                             parse_mode="HTML",
                                             reply_markup=kb.as_markup()
                                             )
-                    await state.update_data(saved_id=payment.payment_method.id)
-                    await state.set_state(SubscriptionStates.waiting_for_payment_method_name)
+                    await add_payment_method(callback_query.from_user.id,
+                                             payment.payment_method.id,
+                                             payment.payment_method.type,
+                                             payment.payment_method.type,
+                                             days_delay=0)
                 if user['referrer_id']:
                     referrer = await get_user(user_id=user['referrer_id'])
                     first_deposit = await get_is_first_payment_done(user['user_id'])
@@ -4578,19 +4632,6 @@ async def check_payment(callback_query: types.CallbackQuery, state: FSMContext, 
             await send_info_for_admins(f"[ЮKassa. Пополнение баланса] Платеж не подтвержден. Пользователь: {callback_query.from_user.id}", await get_admins(), bot, username=user.get("username"))
 
     await callback_query.answer()
-
-@router.message(SubscriptionStates.waiting_for_payment_method_name)
-async def waiting_for_payment_method_name(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    saved_id = data.get('saved_id')
-    try:
-        kb = InlineKeyboardBuilder()
-        kb.button(text="◀️ Вернуться в меню", callback_data="back_to_menu")
-        await add_payment_method(message.from_user.id, saved_id, message.text, message.text, days_delay=0)
-        await message.answer(f"💳 Метод оплаты с названием <b>{message.text}</b> успешно сохранён!", reply_markup=kb.as_markup(), parse_mode="HTML")
-        await state.clear()
-    except Exception as e:
-        await message.answer(f"❌ Произошла ошибка при сохранении метода оплаты: {e}", parse_mode="HTML")
 
 @router.message(Command("admin"))
 async def admin_menu(message: types.Message):
