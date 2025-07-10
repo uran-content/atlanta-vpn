@@ -16,6 +16,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, BotCommandScopeDefault
+from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
+import redis.asyncio as redis
 
 from config import API_TOKEN
 from handlers.database import (
@@ -290,8 +292,10 @@ async def main() -> None:
     Complexity: O(1) для инициализации
     Dependencies: aiogram, asyncio
     """
+    redis_pool = redis.Redis(host='localhost', port=6379, db=0)
+    storage = RedisStorage(redis=redis_pool, key_builder=DefaultKeyBuilder(with_destiny=True))
+
     bot = BotFactory.create_bot(API_TOKEN)
-    storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
     dp.include_router(router)
 
