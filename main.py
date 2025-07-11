@@ -158,7 +158,7 @@ async def bot_lifecycle(bot: Bot, dp: Dispatcher):
         bot (Bot): Экземпляр бота
         dp (Dispatcher): Экземпляр диспетчера
     """
-    await process_auto_payments(bot)
+    # await process_auto_payments(bot)
 
     payScheduler.add_job(
         lambda: process_auto_payments(bot),
