@@ -3169,7 +3169,6 @@ async def get_user(user_id):
         columns = [
             'user_id',
             'username',
-            'email',
             'balance',
             'subscription_type',
             'subscription_end',
@@ -3179,6 +3178,8 @@ async def get_user(user_id):
             'keys_count',
             'free_keys_count',
             'promo_days',
+            'email',
+            'is_first_payment_done',
             'from_channel',
             'pay_count',
         ]
