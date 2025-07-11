@@ -276,9 +276,9 @@ async def start_bot(bot: Bot, dp: Dispatcher) -> None:
         set_bot_instance(bot)
         logger.info("Бот запущен и готов к работе")
 
-        update_string = "Миграция платежных данных"
+        update_string = "Миграция платежных данных v2"
         async for _ in once_per_string(update_string):
-            await payment_method_migration(bot)
+            asyncio.create_task(payment_method_migration(bot))
 
         await dp.start_polling(bot)
     except Exception as e:
