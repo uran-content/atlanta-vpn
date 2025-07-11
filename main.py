@@ -162,7 +162,7 @@ async def bot_lifecycle(bot: Bot, dp: Dispatcher):
 
     payScheduler.add_job(
         lambda: process_auto_payments(bot),
-        trigger=CronTrigger(hour=10, minute=0),
+        trigger=CronTrigger(hour=24, minute=0),
         id='auto_payments',
         replace_existing=True
     )
