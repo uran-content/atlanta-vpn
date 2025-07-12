@@ -90,7 +90,8 @@ async def process_auto_payments(bot=None):
             
             # Обрабатываем каждого пользователя
             for key in keys:
-                success = await process_key_payment(key, bot)
+                user_id = key["user_id"]
+                success = await process_key_payment(key, bot, )
                 if success:
                     payment_count += 1
 
@@ -100,7 +101,6 @@ async def process_auto_payments(bot=None):
                     remove_job(job_id)
                 else:
                     key_str = key["key"]
-                    user_id = key["user_id"]
 
                     run_time = datetime.now(tz=tzlocal.get_localzone()) + timedelta(days=1)
                     
@@ -165,7 +165,7 @@ async def process_auto_payments(bot=None):
         admins = await get_admins()
         await send_info_for_admins(error_msg, admins, bot)
 
-async def process_key_payment(key: Dict, bot: Bot) -> bool:
+async def process_key_payment(key: Dict, bot: Bot, email: str) -> bool:
     """
     Обрабатывает автоматический платеж для конкретного пользователя,
     пытаясь списать деньги со всех сохраненных методов оплаты
@@ -227,7 +227,8 @@ async def process_key_payment(key: Dict, bot: Bot) -> bool:
                     payment_id = await create_auto_payment(
                         amount=key_price,
                         description=description,
-                        saved_method_id=payment_method_id
+                        saved_method_id=payment_method_id,
+                        email=user_info["email"]
                     )
                     
                     payment_attempts += 1

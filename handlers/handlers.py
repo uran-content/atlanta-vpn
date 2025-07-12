@@ -4127,7 +4127,7 @@ async def extend_key(key: str, address: str, bot: Bot, user: Dict, device, uniqu
         error_message = f"❌ Обратитесь в поддержку. Ошибка при продлении подписки: {str(e)}"
         await message.answer(error_message)
 
-async def client_pay(current_user_id, price, bot, user) -> bool:
+async def client_pay(current_user_id, price, bot, user, email) -> bool:
     """
     Проводит попытку оплаты VPN
     """
@@ -4341,7 +4341,7 @@ async def process_email(message: Message, state: FSMContext, bot: Bot, existing_
     print(data)
     if unique_id:
         if balance < int(price):
-            success_payment = await client_pay(current_user_id=current_user_id, price=price, bot=bot, user=user)
+            success_payment = await client_pay(current_user_id=current_user_id, price=price, bot=bot, user=user, email=UserEmail)
             
             if not success_payment:
                 kb = InlineKeyboardBuilder()
@@ -4393,7 +4393,7 @@ async def process_email(message: Message, state: FSMContext, bot: Bot, existing_
     print(f"process_email -- {data}")
 
     if balance < int(price):
-        success_payment = await client_pay(current_user_id=current_user_id, price=price, bot=bot, user=user)
+        success_payment = await client_pay(current_user_id=current_user_id, price=price, bot=bot, user=user, email=UserEmail)
 
         if not success_payment:
             kb = InlineKeyboardBuilder()
