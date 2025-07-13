@@ -3644,7 +3644,7 @@ async def connection(callback: types.CallbackQuery, state: FSMContext, bot: Bot)
     kb.button(text="🖥 Windows", callback_data="device_windows")
     kb.button(text="🍎 macOS", callback_data="device_mac")
     kb.button(text="◀️ Вернуться в меню", callback_data="back_to_menu")
-    kb.adjust(2, 2, 1, 1) 
+    kb.adjust(2, 2, 1, 1)
 
     connection_text = (
         "🌐 <b>Выберите устройство для подключения:</b>\n\n"
@@ -4029,7 +4029,7 @@ async def extend_key(key: str, address: str, bot: Bot, user: Dict, device, uniqu
                     use_tls_verify=False
         )
         await send_info_for_admins(
-            f"[Контроль Сервера, Функция: process_email]\nНайденый сервер IP:\n{address}",
+            f"[Контроль Сервера, Функция: extend_key]\nНайденый сервер IP:\n{address}",
             await get_admins(),
             bot, 
             username=user.get("username")
@@ -4100,12 +4100,12 @@ async def extend_key(key: str, address: str, bot: Bot, user: Dict, device, uniqu
 
             # Убеждаемся, что передаем корректное значение времени
             await update_key_expiry_date(
-                key = key, 
+                key = key,
                 new_expiry_time=new_expiry_time
             )
             
             await send_info_for_admins(
-                f"[Контроль ПРОТОКОЛА, Функция: process_email.\nсервер: {address},\nюзер: {client.email},\nновый протокол: {protocol}]:\n{client}",
+                f"[Контроль ПРОТОКОЛА, Функция: extend_key.\nсервер: {address},\nюзер: {client.email},\nновый протокол: {protocol}]:\n{client}",
                 await get_admins(),
                 bot,
                 username=user.get("username")
@@ -4144,11 +4144,16 @@ async def client_pay(current_user_id, price, bot, user, email) -> bool:
                 saved_method_id=payment_method_id
             )
 
+            await add_transaction(user_id=current_user_id, amount=price, transaction_id=payment_id, status="pending")
+
             payment_success, saved_payment_method_type, payment = await check_payment_status(payment_id, price, second_arg="type")
 
             if payment_success:
                 await send_info_for_admins(f"[Продление] Успешно продлили ключ для пользователя {current_user_id} с помощью сохраненных методов", await get_admins(), bot, username=user.get("username"))
+                await update_transaction_status(transaction_id=payment_id, new_status="succeeded")
                 return True
+            else:
+                await update_transaction_status(transaction_id=payment_id, new_status="failed")
     
     return False
 
@@ -4390,7 +4395,6 @@ async def process_email(message: Message, state: FSMContext, bot: Bot, existing_
     devices = DEVICES
 
     data = await state.get_data()
-    print(f"process_email -- {data}")
 
     if balance < int(price):
         success_payment = await client_pay(current_user_id=current_user_id, price=price, bot=bot, user=user, email=UserEmail)
@@ -4437,7 +4441,6 @@ async def process_email_handler(callback_query: types.CallbackQuery, state: FSMC
     user_id = callback_query.from_user.id
 
     data = await state.get_data()
-    print(f"process_email_handler -- {data}")
 
     email = await get_user_email(user_id=user_id)
     await callback_query.answer()

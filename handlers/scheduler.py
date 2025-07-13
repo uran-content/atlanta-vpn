@@ -16,6 +16,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, InlineKeyboardButton
 from aiogram.client.default import DefaultBotProperties
 from config import API_TOKEN, SUPPORT_URI
 from handlers.database import (
+    update_transaction_status,
+    add_transaction,
     update_balance,
     update_key_expriration_date,
     get_all_users_with_subscription,
@@ -230,6 +232,8 @@ async def process_key_payment(key: Dict, bot: Bot, email: str) -> bool:
                         saved_method_id=payment_method_id,
                         email=user_info["email"]
                     )
+
+                    await add_transaction(user_id=user_id, amount=key_price, transaction_id=payment_id, status="pending")
                     
                     payment_attempts += 1
                     
@@ -243,12 +247,15 @@ async def process_key_payment(key: Dict, bot: Bot, email: str) -> bool:
                         
                         # Логируем успешный платеж
                         logger.info(f"Успешное списание с метода оплаты ID: {payment_method['id']} для пользователя {user_id}")
+
+                        await update_transaction_status(transaction_id=payment_id, new_status="succeeded")
                         
                         # Прекращаем перебор методов оплаты
                         break
                     else:
                         # Логируем неудачную попытку
                         logger.warning(f"Неудачное списание с метода оплаты ID: {payment_method['id']} для пользователя {user_id}")
+                        await update_transaction_status(transaction_id=payment_id, new_status="failed")
                 
                 except Exception as e:
                     logger.error(f"Ошибка при попытке списания с метода оплаты ID: {payment_method['id']}: {str(e)}")
