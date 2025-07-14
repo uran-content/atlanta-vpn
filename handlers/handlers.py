@@ -483,7 +483,7 @@ async def troubleshoot_vpn(callback: types.CallbackQuery, bot: Bot, state: FSMCo
         return
     
     kb = InlineKeyboardBuilder()
-    # kb.button(text="🔄 Заменить ключ", callback_data="replace_key")
+    kb.button(text="🔄 Заменить ключ", callback_data="replace_key")
     kb.button(text="🌍 Сменить страну", callback_data="change_key_country")
     kb.button(text="🆘 Поддержка", url=SUPPORT_URI)
     kb.button(text="◀️ Назад", callback_data="back_to_menu")
@@ -1983,7 +1983,7 @@ async def active_keys(callback: types.CallbackQuery, bot: Bot):
 async def key_settings(callback: types.CallbackQuery):
     kb = InlineKeyboardBuilder()
     kb.button(text="🔄 Продлить подписку", callback_data="extend_subscription")
-    # kb.button(text="🔄 Заменить ключ", callback_data="replace_key")
+    kb.button(text="🔄 Заменить ключ", callback_data="replace_key")
     kb.button(text="🌍 Изменить страну", callback_data="change_key_country")
     kb.button(text="📡 Изменить протокол", callback_data="change_key_protocol")
     kb.button(text="📝 Изменить название ключа", callback_data="change_key_name")
@@ -1996,8 +1996,8 @@ async def key_settings(callback: types.CallbackQuery):
             "Выберите действие:\n\n"
             "🔄 <b>Продлить подписку</b>\n"
             "└ Продлить срок действия текущего ключа\n\n"
-            # "🔄 <b>Заменить ключ</b>\n"
-            # "└ Получить новый ключ взамен текущего\n\n"
+            "🔄 <b>Заменить ключ</b>\n"
+            "└ Получить новый ключ взамен текущего\n\n"
             "🌍 <b>Изменить страну</b>\n"
             "└ Выбрать другой сервер подключения\n\n"
             "📡 <b>Изменить протокол</b>\n"
@@ -4221,7 +4221,7 @@ async def connect_key(current_user_id, days, selected_country, selected_protocol
         server_address = address.split(':')[0]
         client = await api.client.get_by_email(email)
 
-        if client:   
+        if client:
             if selected_protocol == 'vless':
                 vpn_link = (
                     f"vless://{client_id}@{server_address}:443"

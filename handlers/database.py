@@ -1402,7 +1402,7 @@ async def get_api_instance(country: str = None, use_shadowsocks: bool = None):
                         CAST(i.clients_count AS FLOAT) / NULLIF(CAST(i.max_clients AS FLOAT), 0) as load_ratio
                     FROM servers s
                     INNER JOIN inbounds i ON TRIM(LOWER(s.address)) = TRIM(LOWER(i.server_address))
-                    WHERE s.is_active = 1 
+                    WHERE s.is_active = 1
                     AND i.clients_count < i.max_clients
                     AND i.max_clients > 0
                 """
