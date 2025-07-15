@@ -4147,7 +4147,7 @@ async def client_pay(current_user_id, price, bot, user, email) -> bool:
 
             await add_transaction(user_id=current_user_id, amount=price, transaction_id=payment_id, status="pending")
 
-            payment_success, saved_payment_method_type, payment = await check_payment_status(payment_id, price, second_arg="type")
+            payment_success, saved_payment_method_type, payment = await check_payment_status(payment_id, price, logger=logger, second_arg="type")
 
             if payment_success:
                 await send_info_for_admins(f"[Продление] Успешно продлили ключ для пользователя {current_user_id} с помощью сохраненных методов", await get_admins(), bot, username=user.get("username"))
@@ -4456,7 +4456,7 @@ async def delayed_payment_check(bot: Bot, user_id: int, payment_id: str, amount:
     user = await get_user(user_id=user_id)
     
     # Проверяем статус платежа
-    payment_success, saved_payment_method_id, payment = await check_payment_status(payment_id, amount)
+    payment_success, saved_payment_method_id, payment = await check_payment_status(payment_id, amount, logger)
     
     # Если платеж не был обработан ранее (статус всё ещё "pending")
     transaction = await get_transaction_by_id(payment_id)
@@ -4551,7 +4551,7 @@ async def delayed_payment_check(bot: Bot, user_id: int, payment_id: str, amount:
 async def check_payment(callback_query: types.CallbackQuery, state: FSMContext, bot: Bot):
     data = await state.get_data()
     payment_id = data.get('request_label')
-    payment_success, saved_payment_method_id, payment = await check_payment_status(payment_id, data.get('amount'))
+    payment_success, saved_payment_method_id, payment = await check_payment_status(payment_id, data.get('amount'), logger)
     action = data.get('action')
     user = await get_user(user_id=callback_query.from_user.id)
 

@@ -1,4 +1,6 @@
 # handlers.payments.py
+import logging
+
 from yookassa import Payment, Configuration
 from config import SHOP_ID, SECRET_KEY, DEFAULT_EMAIL
 
@@ -98,7 +100,7 @@ async def get_payment_info(transaction_id: str):
     payment_info = Payment.find_one(transaction_id)
     return payment_info
 
-async def check_payment_status(payment_id: str, amount: int, second_arg: str = "id") -> bool:
+async def check_payment_status(payment_id: str, amount: int, logger: logging, second_arg: str = "id") -> bool:
     """
     Check payment status in YooKassa
 
@@ -129,12 +131,12 @@ async def check_payment_status(payment_id: str, amount: int, second_arg: str = "
         return False, None, None
 
     except ValueError as e:
-        print(f"Invalid payment ID: {payment_id}, {e}")
-        return False
+        logger.error(f"Invalid payment ID: {payment_id}, {e}")
+        return False, None, None
 
     except Exception as e:
-        print(f"Error checking payment status: {str(e)}")
-        return False
+        logger.error(f"Error checking payment status: {str(e)}")
+        return False, None, None
 
 async def check_transaction_status(payment_id: str):
     try:

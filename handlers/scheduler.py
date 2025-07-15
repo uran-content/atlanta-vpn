@@ -238,7 +238,7 @@ async def process_key_payment(key: Dict, bot: Bot, email: str) -> bool:
                     payment_attempts += 1
                     
                     # Проверяем статус платежа
-                    payment_success, saved_payment_method_type, payment = await check_payment_status(payment_id, key_price, second_arg="type")
+                    payment_success, saved_payment_method_type, payment = await check_payment_status(payment_id, key_price, logger=logger, second_arg="type")
                     
                     if payment_success:
                         # Платеж успешен, запоминаем метод и сумму
