@@ -1,4 +1,5 @@
 # handlers.payments.py
+import asyncio
 import logging
 
 from yookassa import Payment, Configuration
@@ -111,32 +112,36 @@ async def check_payment_status(payment_id: str, amount: int, logger: logging, se
     Returns:
         bool: True if payment succeeded, False otherwise
     """
-    try:
-        payment = Payment.find_one(payment_id)
+    while True:
+        try:
+            payment = Payment.find_one(payment_id)
 
-        print("CHECK PAYMENT STATUS")
-        if payment and payment.status == "succeeded":
-            print("SUCCEEDED")
-            print(f"payment.amount.value = {payment.amount.value}")
-            if (payment.amount.value == int(amount)) or (payment.amount.value == float(amount)):
-                print("AMOUNT EQUALS")
-                if payment.payment_method.saved:
-                    print("SAVED")
-                    if second_arg == "id":
-                        return True, payment.payment_method.id, payment
-                    elif second_arg == "type":
-                        print("TYPE")
-                        return True, payment.payment_method.type, payment
-                return True, None, None
-        return False, None, None
+            logger.info("CHECK PAYMENT STATUS")
+            if payment and payment.status == "succeeded":
+                logger.info("SUCCEEDED")
+                logger.info(f"payment.amount.value = {payment.amount.value}")
+                if (payment.amount.value == int(amount)) or (payment.amount.value == float(amount)):
+                    logger.info("AMOUNT EQUALS")
+                    if payment.payment_method.saved:
+                        logger.info("SAVED")
+                        if second_arg == "id":
+                            logger.info("ID")
+                            return True, payment.payment_method.id, payment
+                        elif second_arg == "type":
+                            logger.info("TYPE")
+                            return True, payment.payment_method.type, payment
+                    return True, None, None
+            elif payment and payment.status == "canceled":
+                return False, None, None
+            await asyncio.sleep(2)
 
-    except ValueError as e:
-        logger.error(f"Invalid payment ID: {payment_id}, {e}")
-        return False, None, None
+        except ValueError as e:
+            logger.error(f"Invalid payment ID: {payment_id}, {e}")
+            return False, None, None
 
-    except Exception as e:
-        logger.error(f"Error checking payment status: {str(e)}")
-        return False, None, None
+        except Exception as e:
+            logger.error(f"Error checking payment status: {str(e)}")
+            return False, None, None
 
 async def check_transaction_status(payment_id: str):
     try:
