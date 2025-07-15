@@ -4141,7 +4141,8 @@ async def client_pay(current_user_id, price, bot, user, email) -> bool:
             payment_id = await create_auto_payment(
                 amount=price,
                 description=description,
-                saved_method_id=payment_method_id
+                saved_method_id=payment_method_id,
+                email=email
             )
 
             await add_transaction(user_id=current_user_id, amount=price, transaction_id=payment_id, status="pending")
