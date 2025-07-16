@@ -117,6 +117,12 @@ async def check_payment_status(payment_id: str, amount: int, logger: logging, se
             payment = Payment.find_one(payment_id)
 
             logger.info("CHECK PAYMENT STATUS")
+
+            if payment:
+                logger.info("Объект платежа получили успешно")
+                if payment.status:
+                    logger.info(f"статус: {payment.status}")
+
             if payment and payment.status == "succeeded":
                 logger.info("SUCCEEDED")
                 logger.info(f"payment.amount.value = {payment.amount.value}")
