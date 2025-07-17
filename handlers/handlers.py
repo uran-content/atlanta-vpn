@@ -2913,8 +2913,8 @@ async def process_selected_key(message, key, user_id, state, bot):
         # Создаем нового клиента с данными из ключа
         if protocol == 'vless':
             new_client = Client(
-                id=unique_uuid, 
-                email=unique_email, 
+                id=unique_uuid,
+                email=unique_email,
                 enable=True, 
                 expiry_time=old_expiry_time, 
                 flow="xtls-rprx-vision"
@@ -7138,7 +7138,7 @@ async def change_country_start(callback: types.CallbackQuery, state: FSMContext)
         "🇨🇿 Чехия": "Czechia",
         "🇳🇱 Нидерланды": "Netherlands",
         "🇰🇿 Казахстан": "Kazakhstan",
-        "🇫🇷 Финляндия": "Finland",
+        "🇫🇮 Финляндия": "Finland",
     }
     
     for display_name, country_code in countries.items():
